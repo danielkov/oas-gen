@@ -1,0 +1,18 @@
+[package]
+name = "generate"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+codegen = { path = "../codegen" }
+libloading = { version = "0.8", optional = true }
+typescript = { path = "../templates/typescript", optional = true }
+
+[features]
+default = ["typescript"]
+dynamic-plugins = ["libloading"]
+
+[dev-dependencies]
+typescript = { path = "../templates/typescript" }
+codegen = { path = "../codegen" }
+ir = { path = "../ir" }

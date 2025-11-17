@@ -1,0 +1,3 @@
+[workspace]
+resolver = "3"
+members = ["ast", "cli", "codegen", "generate", "ir", "parser", "parser2", "templates/typescript"]

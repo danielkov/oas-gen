@@ -1,0 +1,156 @@
+# OAS-Gen2 Project Rules
+
+## Project Overview
+
+This is a Rust monorepo project that generates SDKs and server interfaces from OpenAPI 3.x specifications.
+The architecture follows a clean pipeline: OpenAPI Spec → Parser → AST/GenIR → Generator → Virtual FS → Disk.
+
+## Workspace Structure
+
+- **`parser/`**: OpenAPI 3.x specification parser (uses `oas` crate)
+- **`ast/`**: Converts OpenAPI to language-agnostic GenIR (Intermediate Representation)
+- **`codegen/`**: Core abstractions (Generator trait, VirtualFS, Config, ServiceStyle)
+- **`generate/`**: Generator registry and plugin loading system
+- **`templates/*/`**: Language-specific code generators (currently TypeScript)
+- **`cli/`**: Command-line interface binary (`oas-gen`)
+
+## CLI Usage
+
+```bash
+# Basic usage
+cargo run --bin oas-gen -- examples/petstore.json -t typescript
+
+# With options
+cargo run --bin oas-gen -- examples/petstore.json -t typescript -o ./output --service-style single-client -v
+```
+
+## Development Guidelines
+
+### Code Style
+
+- Use Rust 2024 edition features
+- Follow standard Rust naming conventions (snake_case, CamelCase, SCREAMING_SNAKE_CASE)
+- Use `anyhow::Result` for error handling in applications
+- Use custom `Result<T>` types with `thiserror` in libraries
+- Prefer explicit error context with `.context()` or `.with_context()`
+- Use meaningful emoji in CLI output for better UX (🔍 📄 🏗️ 📦 🔨 💾 ✅)
+
+### Adding New Templates
+
+1. Create new crate in `templates/<language>/`
+2. Implement the `codegen::Generator` trait
+3. Add as optional feature in `generate/Cargo.toml`
+4. Register in `generate/src/lib.rs`
+5. Create tests in the template crate
+
+### Template Implementation Pattern
+
+```rust
+use codegen::{Generator, GenIr, Config, VirtualFS, Result};
+
+pub struct MyLanguageGenerator;
+
+impl Generator for MyLanguageGenerator {
+    fn generate(&self, ir: &GenIr, config: &Config) -> Result<VirtualFS> {
+        let mut vfs = VirtualFS::new();
+        // Generation logic here
+        Ok(vfs)
+    }
+
+    fn language(&self) -> &str {
+        "mylanguage"
+    }
+}
+```
+
+### VirtualFS Usage
+
+- Use `VirtualFS` to build the output file structure in memory
+- Write files using `vfs.write_file(path, content)`
+- Let the VirtualFS handle actual disk I/O
+
+### Testing
+
+- Write integration tests for each template in `templates/<lang>/tests/`
+- Use `examples/petstore.json` as test data
+- Test generated code compiles/runs in target language
+
+### GenIR Structure
+
+The intermediate representation includes:
+
+- **Types**: Structs, enums, type aliases (language-agnostic)
+- **Services**: Operations grouped by service/tag/single-client
+- **Endpoints**: Path, method, parameters, request/response schemas
+- **ServiceStyle**: Controls how operations are organized
+
+### Common Patterns
+
+#### Reading OpenAPI Spec
+
+```rust
+let spec_content = std::fs::read_to_string(&path)?;
+let oas: oas::OpenAPIV3 = serde_json::from_str(&spec_content)?;
+```
+
+#### Converting to GenIR
+
+```rust
+let gen_ir: codegen::GenIr = oas.into();
+```
+
+#### Using Generator
+
+```rust
+let registry = generate::GeneratorRegistry::with_defaults();
+let vfs = registry.generate(&template_name, &gen_ir, &config)?;
+vfs.write_to_disk(&output_dir)?;
+```
+
+## Dependencies
+
+- **oas**: OpenAPI 3.x types and parser
+- **clap**: CLI argument parsing (with derive feature)
+- **anyhow**: Error handling for binaries
+- **thiserror**: Error handling for libraries
+- **serde**: Serialization/deserialization
+- **handlebars**: Template rendering (in template crates)
+
+## Build Commands
+
+```bash
+# Build everything
+cargo build
+
+# Build release
+cargo build --release
+
+# Run tests
+cargo test
+
+# Run specific crate tests
+cargo test -p parser
+
+# Generate docs
+cargo doc --open
+
+# Run CLI
+cargo run --bin oas-gen -- --help
+```
+
+## Important Notes
+
+- Always use `edition = "2024"` in Cargo.toml files
+- The CLI binary is named `oas-gen` (not `cli`)
+- Template crates should be optional features in `generate/`
+- Generated code should have zero runtime dependencies on this project
+- Use verbose flag (`-v`) during development for debugging
+- ServiceStyle affects output structure: per-service, single-client, or by-tag
+
+## When Adding Features
+
+1. Consider where it belongs in the pipeline
+2. Update relevant trait definitions
+3. Add tests
+4. Update documentation
+5. Consider backward compatibility with existing templates

@@ -1,0 +1,6 @@
+{% if let Some(summary) = docs.summary %}/**
+ * {{ summary }}
+{% if let Some(description) = docs.description %} *
+ * {{ description }}
+{% endif %} */
+{% endif %}export type {{ name.pascal }} = {{ target }};

@@ -1,0 +1,11 @@
+{% if let Some(summary) = docs.summary %}/**
+ * {{ summary }}
+{% if let Some(description) = docs.description %} *
+ * {{ description }}
+{% endif %} */
+{% endif %}export interface {{ name.pascal }} {
+{% for field in fields %}  {% if let Some(doc) = field.docs %}/**
+   * {{ doc }}
+   */
+  {% endif %}{{ field.name }}{% if field.optional %}?{% endif %}: {{ field.type_str }};
+{% endfor %}}

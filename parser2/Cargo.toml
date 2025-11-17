@@ -1,0 +1,9 @@
+[package]
+name = "parser2"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+oas3 = "0.20.0"
+serde_json = "1.0.145"
+serde_yaml = "0.9"

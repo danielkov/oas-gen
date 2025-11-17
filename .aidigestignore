@@ -1,0 +1,43 @@
+# AI Digest Ignore
+# Files and directories that should be ignored when creating AI context
+
+# Build artifacts
+target/
+*.rlib
+*.rmeta
+*.d
+*.o
+
+# Documentation
+target/doc/
+target/debug/doc/
+target/release/doc/
+
+# Lock files (too verbose)
+Cargo.lock
+
+# Dependencies
+target/debug/deps/
+target/release/deps/
+target/debug/build/
+target/release/build/
+
+# Incremental compilation
+target/debug/incremental/
+target/release/incremental/
+
+# Temp files
+target/tmp/
+.DS_Store
+*.swp
+*.swo
+*~
+
+# IDE
+.vscode/
+.idea/
+*.iml
+
+# Cache
+.cache/
+

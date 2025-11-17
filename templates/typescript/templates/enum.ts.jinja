@@ -1,0 +1,8 @@
+{% if let Some(summary) = docs.summary %}/**
+ * {{ summary }}
+{% if let Some(description) = docs.description %} *
+ * {{ description }}
+{% endif %} */
+{% endif %}export enum {{ name.pascal }} {
+{% for value in values %}  {{ value.name }} = {{ value.value }},
+{% endfor %}}

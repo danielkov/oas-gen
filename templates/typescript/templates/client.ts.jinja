@@ -1,0 +1,25 @@
+{% for service_import in service_imports %}import { {{ service_import.name }}Service } from './{{ service_import.file }}';
+{% endfor %}
+{% if let Some(summary) = api.docs.summary %}/**
+ * {{ summary }}
+{% if let Some(description) = api.docs.description %} *
+ * {{ description }}
+{% endif %} *
+ * @version {{ api.version }}
+ */
+{% endif %}export class {{ api.package_name.pascal }}SDK {
+  {% for service in services %}private _{{ service.name.camel }}: {{ service.name.pascal }}Service | undefined;
+  {% endfor %}
+  constructor(private baseUrl: string = '{{ default_base_url }}') {}
+
+{% for service in services %}  {% if let Some(summary) = service.docs.summary %}/**
+   * {{ summary }}
+   */
+  {% endif %}get {{ service.name.camel }}(): {{ service.name.pascal }}Service {
+    if (!this._{{ service.name.camel }}) {
+      this._{{ service.name.camel }} = new {{ service.name.pascal }}Service(this.baseUrl);
+    }
+    return this._{{ service.name.camel }};
+  }
+
+{% endfor %}}
