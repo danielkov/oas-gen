@@ -1,6 +1,14 @@
 {% for service_import in service_imports %}import { {{ service_import.name }}Service } from './{{ service_import.file }}';
 {% endfor %}
-{% if let Some(summary) = api.docs.summary %}/**
+{% if !auth_schemes.is_empty() %}/**
+ * Security configuration for the SDK
+ */
+export interface SecurityConfig {
+{% for auth in auth_schemes %}  {% if let Some(desc) = auth.docs.description %}/** {{ desc }} */
+  {% endif %}{{ auth.name.camel }}?: string;
+{% endfor %}}
+
+{% endif %}{% if let Some(summary) = api.docs.summary %}/**
  * {{ summary }}
 {% if let Some(description) = api.docs.description %} *
  * {{ description }}
@@ -9,15 +17,18 @@
  */
 {% endif %}export class {{ api.package_name.pascal }}SDK {
   {% for service in services %}private _{{ service.name.camel }}: {{ service.name.pascal }}Service | undefined;
-  {% endfor %}
-  constructor(private baseUrl: string = '{{ default_base_url }}') {}
+  {% endfor %}private security: SecurityConfig;
+
+  constructor({% if !auth_schemes.is_empty() %}security: SecurityConfig, {% endif %}private baseUrl: string = '{{ default_base_url }}') {
+    this.security = {% if !auth_schemes.is_empty() %}security{% else %}{}{% endif %};
+  }
 
 {% for service in services %}  {% if let Some(summary) = service.docs.summary %}/**
    * {{ summary }}
    */
   {% endif %}get {{ service.name.camel }}(): {{ service.name.pascal }}Service {
     if (!this._{{ service.name.camel }}) {
-      this._{{ service.name.camel }} = new {{ service.name.pascal }}Service(this.baseUrl);
+      this._{{ service.name.camel }} = new {{ service.name.pascal }}Service(this.baseUrl, this.security);
     }
     return this._{{ service.name.camel }};
   }

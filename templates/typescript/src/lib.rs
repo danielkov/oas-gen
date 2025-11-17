@@ -52,7 +52,7 @@ impl TypeScriptGenerator {
                             name: &f.name.camel,
                             optional: f.ty.optional,
                             type_str: self.render_type_ref(&f.ty, ir),
-                            docs: f.docs.summary.as_deref(),
+                            docs: &f.docs,
                         })
                         .collect(),
                 };
@@ -244,6 +244,7 @@ impl TypeScriptGenerator {
         let data = ClientTemplate {
             api: &ir.api,
             services: &ir.services,
+            auth_schemes: &ir.auth_schemes,
             default_base_url,
             service_imports,
         };
@@ -386,6 +387,46 @@ impl TypeScriptGenerator {
 
         let has_params = !params.is_empty();
 
+        // Collect auth schemes used by this operation
+        let auth_schemes: Vec<AuthSchemeUse> = op
+            .auth
+            .iter()
+            .filter_map(|auth_use| {
+                // Find the auth scheme in the IR
+                ir.auth_schemes
+                    .iter()
+                    .find(|scheme| scheme.id == auth_use.scheme)
+                    .map(|scheme| {
+                        let (kind, param_name) = match &scheme.kind {
+                            ir::gen_ir::AuthKind::Http {
+                                scheme: http_scheme,
+                                ..
+                            } => (format!("bearer_{}", http_scheme), None),
+                            ir::gen_ir::AuthKind::ApiKey {
+                                location,
+                                param_name,
+                            } => {
+                                let kind = match location {
+                                    ir::gen_ir::ApiKeyLocation::Header => "apikey_header",
+                                    ir::gen_ir::ApiKeyLocation::Query => "apikey_query",
+                                    ir::gen_ir::ApiKeyLocation::Cookie => "apikey_cookie",
+                                };
+                                (kind.to_string(), Some(param_name.clone()))
+                            }
+                            ir::gen_ir::AuthKind::OAuth2 { .. } => ("oauth2".to_string(), None),
+                            ir::gen_ir::AuthKind::OpenIdConnect { .. } => {
+                                ("openid".to_string(), None)
+                            }
+                        };
+                        AuthSchemeUse {
+                            name_camel: scheme.name.camel.clone(),
+                            kind,
+                            param_name,
+                        }
+                    })
+            })
+            .collect();
+
         Ok(OperationData {
             method_name: op.name.camel.clone(),
             docs: op.docs.clone(),
@@ -399,6 +440,7 @@ impl TypeScriptGenerator {
             return_type,
             http_method: http_method.to_string(),
             path_template: op.http.path_template.clone(),
+            auth_schemes,
         })
     }
 
@@ -578,7 +620,7 @@ struct FieldData<'a> {
     name: &'a str,
     optional: bool,
     type_str: String,
-    docs: Option<&'a str>,
+    docs: &'a ir::gen_ir::Docs,
 }
 
 #[derive(Template)]
@@ -629,6 +671,13 @@ struct OperationData {
     return_type: String,
     http_method: String,
     path_template: String,
+    auth_schemes: Vec<AuthSchemeUse>,
+}
+
+struct AuthSchemeUse {
+    name_camel: String,
+    kind: String, // "bearer", "apikey_header", "apikey_query"
+    param_name: Option<String>,
 }
 
 struct ParamData {
@@ -659,6 +708,7 @@ struct HeaderParamData {
 struct ClientTemplate<'a> {
     api: &'a ir::gen_ir::ApiMeta,
     services: &'a [ir::gen_ir::Service],
+    auth_schemes: &'a [ir::gen_ir::AuthScheme],
     default_base_url: String,
     service_imports: Vec<ServiceImportData>,
 }
@@ -677,4 +727,177 @@ struct SdkExportTemplate {
 struct ServiceExportData {
     name: String,
     file: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ir::gen_ir::{
+        Additional, CanonicalName, Docs, Field, StableId, TypeDecl, TypeKind, TypeRef,
+    };
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn test_interface_with_field_descriptions() {
+        let generator = TypeScriptGenerator::new();
+
+        // Create a type with full documentation
+        let type_name = CanonicalName::from_string("TestType");
+        let type_docs = Docs {
+            summary: Some("Test type summary".to_string()),
+            description: Some("Test type description with more details".to_string()),
+            deprecated: false,
+            since: None,
+            examples: Vec::new(),
+            external_urls: Vec::new(),
+        };
+
+        // Create a field with documentation
+        let field = Field {
+            name: CanonicalName::from_string("testField"),
+            docs: Docs {
+                summary: Some("Field summary".to_string()),
+                description: Some("Field description with more details".to_string()),
+                deprecated: false,
+                since: None,
+                examples: Vec::new(),
+                external_urls: Vec::new(),
+            },
+            ty: TypeRef {
+                target: StableId("Primitive_String".to_string()),
+                optional: false,
+                nullable: false,
+                by_ref: false,
+                modifiers: Vec::new(),
+            },
+            default: None,
+            deprecated: false,
+            wire_name: "testField".to_string(),
+        };
+
+        let type_decl = TypeDecl {
+            id: StableId("TestType".to_string()),
+            name: type_name,
+            docs: type_docs,
+            kind: TypeKind::Struct {
+                fields: vec![field],
+                additional: Additional::Forbidden,
+                discriminator: None,
+            },
+            origin: None,
+        };
+
+        let ir = GenIr {
+            api: ir::gen_ir::ApiMeta {
+                title: "Test API".to_string(),
+                version: "1.0.0".to_string(),
+                package_name: CanonicalName::from_string("test-api"),
+                docs: Docs::default(),
+            },
+            types: BTreeMap::new(),
+            services: Vec::new(),
+            auth_schemes: Vec::new(),
+            errors: Vec::new(),
+            server_sets: Vec::new(),
+        };
+
+        let result = generator.render_type(&type_decl, &ir).unwrap();
+
+        // Verify the output contains JSDoc comments for the type
+        assert!(result.contains("/**"), "Should contain JSDoc opening");
+        assert!(
+            result.contains("Test type summary"),
+            "Should contain type summary"
+        );
+        assert!(
+            result.contains("Test type description with more details"),
+            "Should contain type description"
+        );
+
+        // Verify the output contains JSDoc comments for the field
+        assert!(
+            result.contains("Field summary"),
+            "Should contain field summary"
+        );
+        assert!(
+            result.contains("Field description with more details"),
+            "Should contain field description"
+        );
+
+        // Verify the interface structure
+        assert!(
+            result.contains("export interface TestType"),
+            "Should contain interface declaration"
+        );
+        assert!(
+            result.contains("testField: string;"),
+            "Should contain field declaration"
+        );
+    }
+
+    #[test]
+    fn test_interface_without_descriptions() {
+        let generator = TypeScriptGenerator::new();
+
+        let type_name = CanonicalName::from_string("SimpleType");
+
+        let field = Field {
+            name: CanonicalName::from_string("simpleField"),
+            docs: Docs::default(), // No summary or description
+            ty: TypeRef {
+                target: StableId("Primitive_String".to_string()),
+                optional: false,
+                nullable: false,
+                by_ref: false,
+                modifiers: Vec::new(),
+            },
+            default: None,
+            deprecated: false,
+            wire_name: "simpleField".to_string(),
+        };
+
+        let type_decl = TypeDecl {
+            id: StableId("SimpleType".to_string()),
+            name: type_name,
+            docs: Docs::default(), // No summary or description
+            kind: TypeKind::Struct {
+                fields: vec![field],
+                additional: Additional::Forbidden,
+                discriminator: None,
+            },
+            origin: None,
+        };
+
+        let ir = GenIr {
+            api: ir::gen_ir::ApiMeta {
+                title: "Test API".to_string(),
+                version: "1.0.0".to_string(),
+                package_name: CanonicalName::from_string("test-api"),
+                docs: Docs::default(),
+            },
+            types: BTreeMap::new(),
+            services: Vec::new(),
+            auth_schemes: Vec::new(),
+            errors: Vec::new(),
+            server_sets: Vec::new(),
+        };
+
+        let result = generator.render_type(&type_decl, &ir).unwrap();
+
+        // Should not have any JSDoc comments since there are no descriptions
+        assert!(
+            !result.contains("/**"),
+            "Should not contain JSDoc when no descriptions exist"
+        );
+
+        // But should still have the interface
+        assert!(
+            result.contains("export interface SimpleType"),
+            "Should contain interface declaration"
+        );
+        assert!(
+            result.contains("simpleField: string;"),
+            "Should contain field declaration"
+        );
+    }
 }

@@ -1,11 +1,13 @@
-{% if let Some(summary) = docs.summary %}/**
- * {{ summary }}
-{% if let Some(description) = docs.description %} *
- * {{ description }}
+{% if docs.summary.is_some() || docs.description.is_some() %}/**
+{% if let Some(summary) = docs.summary %} * {{ summary }}
+{% if docs.description.is_some() %} *
+{% endif %}{% endif %}{% if let Some(description) = docs.description %} * {{ description }}
 {% endif %} */
 {% endif %}export interface {{ name.pascal }} {
-{% for field in fields %}  {% if let Some(doc) = field.docs %}/**
-   * {{ doc }}
-   */
+{% for field in fields %}  {% if field.docs.summary.is_some() || field.docs.description.is_some() %}/**
+{% if let Some(summary) = field.docs.summary %}   * {{ summary }}
+{% if field.docs.description.is_some() %}   *
+{% endif %}{% endif %}{% if let Some(description) = field.docs.description %}   * {{ description }}
+{% endif %}   */
   {% endif %}{{ field.name }}{% if field.optional %}?{% endif %}: {{ field.type_str }};
 {% endfor %}}

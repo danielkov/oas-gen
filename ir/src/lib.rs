@@ -99,9 +99,9 @@ fn should_hoist_schema(schema: &oas3::spec::ObjectSchema) -> bool {
     if let Some(schema_type) = &schema.schema_type {
         if let oas3::spec::SchemaTypeSet::Single(oas3::spec::SchemaType::Object) = schema_type {
             // Hoist if it has properties, or if it's explicitly an object
-            return !schema.properties.is_empty() ||
-                   schema.additional_properties.is_some() ||
-                   !schema.required.is_empty();
+            return !schema.properties.is_empty()
+                || schema.additional_properties.is_some()
+                || !schema.required.is_empty();
         }
     }
 
@@ -763,15 +763,22 @@ fn convert_oauth_scopes(scopes: &std::collections::BTreeMap<String, String>) -> 
 fn convert_paths(
     ctx: &mut BuildContext,
     paths: &Option<BTreeMap<String, oas3::spec::PathItem>>,
-    _security: &Vec<oas3::spec::SecurityRequirement>,
+    security: &Vec<oas3::spec::SecurityRequirement>,
     _components: Option<&oas3::spec::Components>,
 ) -> Vec<Service> {
     // Group operations by tag (or use "default" if no tag)
     let mut services_map: BTreeMap<String, Vec<Operation>> = BTreeMap::new();
 
+    // Convert global security to Option for easier handling
+    let global_security = if security.is_empty() {
+        None
+    } else {
+        Some(security.clone())
+    };
+
     if let Some(paths_map) = paths {
         for (path, path_item) in paths_map.iter() {
-            convert_path_item(ctx, path, path_item, &mut services_map);
+            convert_path_item(ctx, path, path_item, &mut services_map, &global_security);
         }
     }
 
@@ -799,6 +806,7 @@ fn convert_path_item(
     path: &str,
     path_item: &oas3::spec::PathItem,
     services_map: &mut BTreeMap<String, Vec<Operation>>,
+    global_security: &Option<Vec<oas3::spec::SecurityRequirement>>,
 ) {
     let methods = [
         ("get", path_item.get.as_ref()),
@@ -813,7 +821,7 @@ fn convert_path_item(
 
     for (method_name, operation_opt) in methods {
         if let Some(operation) = operation_opt {
-            let op = convert_operation(ctx, path, method_name, operation);
+            let op = convert_operation(ctx, path, method_name, operation, global_security);
 
             // Group by first tag or "default"
             let tag = operation
@@ -833,6 +841,7 @@ fn convert_operation(
     path: &str,
     method_name: &str,
     operation: &oas3::spec::Operation,
+    global_security: &Option<Vec<oas3::spec::SecurityRequirement>>,
 ) -> Operation {
     let operation_id = operation
         .operation_id
@@ -907,6 +916,14 @@ fn convert_operation(
     // Clear current operation ID
     ctx.current_operation_id = None;
 
+    // Convert security requirements
+    // Use operation-level security if present, otherwise fall back to global security
+    let auth = if !operation.security.is_empty() {
+        convert_security_requirements(Some(&operation.security))
+    } else {
+        convert_security_requirements(global_security.as_ref())
+    };
+
     let http = HttpShape {
         method,
         path_template: path.to_string(),
@@ -929,7 +946,7 @@ fn convert_operation(
         success,
         alt_success: Vec::new(),
         errors: ErrorUse::None,
-        auth: Vec::new(), // TODO: convert security requirements
+        auth,
         pagination: None,
         idempotent: matches!(
             method,
@@ -937,6 +954,29 @@ fn convert_operation(
         ),
         retryable_statuses: Default::default(),
     }
+}
+
+/// Convert OpenAPI security requirements to AuthUse
+fn convert_security_requirements(
+    security: Option<&Vec<oas3::spec::SecurityRequirement>>,
+) -> Vec<AuthUse> {
+    let Some(security) = security else {
+        return Vec::new();
+    };
+
+    // OpenAPI security is an array of alternatives (OR)
+    // Each SecurityRequirement is a tuple struct wrapping a BTreeMap of scheme names to scopes
+    // For now, we'll flatten all schemes into a single list
+    security
+        .iter()
+        .flat_map(|req| {
+            req.0.iter().map(|(scheme_name, scopes)| AuthUse {
+                scheme: StableId::new(scheme_name),
+                scopes: scopes.clone(),
+                optional: false, // TODO: determine if this is optional based on context
+            })
+        })
+        .collect()
 }
 
 /// Convert a parameter to the appropriate parameter type
@@ -1988,7 +2028,15 @@ mod tests {
 
         // Operation should reference the hoisted type
         let op = &gen_ir.services[0].operations[0];
-        let response_type = op.success.as_ref().unwrap().ty.as_ref().unwrap().target.clone();
+        let response_type = op
+            .success
+            .as_ref()
+            .unwrap()
+            .ty
+            .as_ref()
+            .unwrap()
+            .target
+            .clone();
         assert_eq!(response_type, response_type_id);
     }
 
