@@ -85,7 +85,6 @@ pub struct ServerVar {
 }
 
 /// #### Types #################################################################
-
 /// Reference to a declared type with view modifiers (nullability, containers).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 pub struct TypeRef {
@@ -141,7 +140,7 @@ pub enum TypeKind {
     },
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, PartialEq)]
 pub enum Additional {
     Forbidden, // additionalProperties: false
     Any,       // additionalProperties: true or absent
@@ -380,9 +379,9 @@ pub enum StatusSpec {
 
 #[derive(Debug, Clone, Serialize)]
 pub enum ErrorUse {
-    Inline(ErrorDecl), // small API: inline per-op
-    Shared(StableId),  // reference into GenIr.errors
-    None,              // no errors (rare)
+    Inline(Box<ErrorDecl>), // small API: inline per-op
+    Shared(StableId),       // reference into GenIr.errors
+    None,                   // no errors (rare)
 }
 
 /// Error declaration can model status → tagged payloads → render to exception/union.

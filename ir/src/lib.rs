@@ -9,10 +9,8 @@ use gen_ir::*;
 /// Builder context for tracking state during conversion
 struct BuildContext<'a> {
     types: BTreeMap<StableId, TypeDecl>,
-    schema_cache: HashMap<String, StableId>, // JSON pointer -> StableId (for $ref)
     inline_schema_cache: HashMap<u64, StableId>, // Schema hash -> StableId (for inline deduplication)
     type_counter: usize,
-    inline_counter: usize,
     used_type_names: HashSet<String>, // Track used names for collision detection
     spec: &'a oas3::spec::Spec,
     current_operation_id: Option<String>, // Track current operation for naming
@@ -22,10 +20,8 @@ impl<'a> BuildContext<'a> {
     fn new(spec: &'a oas3::spec::Spec) -> Self {
         Self {
             types: BTreeMap::new(),
-            schema_cache: HashMap::new(),
             inline_schema_cache: HashMap::new(),
             type_counter: 0,
-            inline_counter: 0,
             used_type_names: HashSet::new(),
             spec,
             current_operation_id: None,
@@ -96,13 +92,13 @@ fn hash_schema(schema: &oas3::spec::ObjectSchema) -> u64 {
 /// Check if a schema is an inline object that should be hoisted
 fn should_hoist_schema(schema: &oas3::spec::ObjectSchema) -> bool {
     // Hoist if it's an object type with properties or additional constraints
-    if let Some(schema_type) = &schema.schema_type {
-        if let oas3::spec::SchemaTypeSet::Single(oas3::spec::SchemaType::Object) = schema_type {
-            // Hoist if it has properties, or if it's explicitly an object
-            return !schema.properties.is_empty()
-                || schema.additional_properties.is_some()
-                || !schema.required.is_empty();
-        }
+    if let Some(schema_type) = &schema.schema_type
+        && let oas3::spec::SchemaTypeSet::Single(oas3::spec::SchemaType::Object) = schema_type
+    {
+        // Hoist if it has properties, or if it's explicitly an object
+        return !schema.properties.is_empty()
+            || schema.additional_properties.is_some()
+            || !schema.required.is_empty();
     }
 
     // Also check if there are no types specified but properties exist (implicit object)
@@ -347,7 +343,11 @@ fn convert_any_of_to_union(
             let variant_name =
                 if let oas3::spec::ObjectOrReference::Ref { ref_path, .. } = schema_ref {
                     // Extract type name from reference like "#/components/schemas/Cat"
-                    ref_path.split('/').last().unwrap_or("Unknown").to_string()
+                    ref_path
+                        .split('/')
+                        .next_back()
+                        .unwrap_or("Unknown")
+                        .to_string()
                 } else {
                     schema
                         .title
@@ -395,7 +395,11 @@ fn convert_one_of_to_union(
             let variant_name =
                 if let oas3::spec::ObjectOrReference::Ref { ref_path, .. } = schema_ref {
                     // Extract type name from reference like "#/components/schemas/Cat"
-                    ref_path.split('/').last().unwrap_or("Unknown").to_string()
+                    ref_path
+                        .split('/')
+                        .next_back()
+                        .unwrap_or("Unknown")
+                        .to_string()
                 } else {
                     schema
                         .title
@@ -439,6 +443,55 @@ fn convert_all_of_to_type(
 
     for schema_ref in schemas {
         if let Ok(schema) = schema_ref.resolve(ctx.spec) {
+            // IMPORTANT: If this schema itself contains an allOf, we need to recursively
+            // merge those fields first. This handles nested allOf (e.g., Final -> Middle -> Base)
+            if !schema.all_of.is_empty() {
+                // Recursively process the nested allOf
+                if let TypeKind::Struct {
+                    fields: nested_fields,
+                    additional: nested_additional,
+                    ..
+                } = convert_all_of_to_type(ctx, &schema.all_of)
+                {
+                    // Merge the nested fields into our fields_map
+                    for nested_field in nested_fields {
+                        if let Some(existing_field) = fields_map.get_mut(&nested_field.wire_name) {
+                            // Merge with existing field (same logic as below)
+                            if !nested_field.ty.optional {
+                                existing_field.ty.optional = false;
+                            }
+                            if nested_field.ty.nullable {
+                                existing_field.ty.nullable = true;
+                            }
+                            if existing_field.ty.target == StableId::new("Any")
+                                && nested_field.ty.target != StableId::new("Any")
+                            {
+                                existing_field.ty.target = nested_field.ty.target;
+                                existing_field.ty.modifiers = nested_field.ty.modifiers;
+                            }
+                            if existing_field.docs.description.is_none()
+                                && nested_field.docs.description.is_some()
+                            {
+                                existing_field.docs.description = nested_field.docs.description;
+                            }
+                            if existing_field.docs.summary.is_none()
+                                && nested_field.docs.summary.is_some()
+                            {
+                                existing_field.docs.summary = nested_field.docs.summary;
+                            }
+                        } else {
+                            // New field from nested allOf
+                            fields_map.insert(nested_field.wire_name.clone(), nested_field);
+                        }
+                    }
+
+                    // Update additionalProperties
+                    if nested_additional == Additional::Forbidden {
+                        additional = Additional::Forbidden;
+                    }
+                }
+            }
+
             // Merge properties from each schema
             let required_set: std::collections::HashSet<String> =
                 schema.required.iter().cloned().collect();
@@ -730,7 +783,7 @@ fn convert_object_schema_to_type_ref_with_hint(
                 // For primitives, create a synthetic ID based on the type
                 let primitive = infer_primitive_from_schema(schema);
                 return TypeRef {
-                    target: StableId::new(&format!("Primitive_{:?}", primitive)),
+                    target: StableId::new(format!("Primitive_{:?}", primitive)),
                     optional: false,
                     nullable,
                     by_ref: false,
@@ -826,7 +879,11 @@ fn convert_schema_ref_to_type_ref_with_hint(
     // Check if this is a reference
     if let oas3::spec::ObjectOrReference::Ref { ref_path, .. } = schema_ref {
         // Extract type name from reference like "#/components/schemas/Pet"
-        let type_name = ref_path.split('/').last().unwrap_or("Unknown").to_string();
+        let type_name = ref_path
+            .split('/')
+            .next_back()
+            .unwrap_or("Unknown")
+            .to_string();
 
         return TypeRef {
             target: StableId::new(&type_name),
@@ -1067,7 +1124,7 @@ fn convert_oauth_scopes(scopes: &std::collections::BTreeMap<String, String>) -> 
 fn convert_paths(
     ctx: &mut BuildContext,
     paths: &Option<BTreeMap<String, oas3::spec::PathItem>>,
-    security: &Vec<oas3::spec::SecurityRequirement>,
+    security: &[oas3::spec::SecurityRequirement],
     _components: Option<&oas3::spec::Components>,
 ) -> Vec<Service> {
     // Group operations by tag (or use "default" if no tag)
@@ -1077,12 +1134,12 @@ fn convert_paths(
     let global_security = if security.is_empty() {
         None
     } else {
-        Some(security.clone())
+        Some(security)
     };
 
     if let Some(paths_map) = paths {
         for (path, path_item) in paths_map.iter() {
-            convert_path_item(ctx, path, path_item, &mut services_map, &global_security);
+            convert_path_item(ctx, path, path_item, &mut services_map, global_security);
         }
     }
 
@@ -1110,7 +1167,7 @@ fn convert_path_item(
     path: &str,
     path_item: &oas3::spec::PathItem,
     services_map: &mut BTreeMap<String, Vec<Operation>>,
-    global_security: &Option<Vec<oas3::spec::SecurityRequirement>>,
+    global_security: Option<&[oas3::spec::SecurityRequirement]>,
 ) {
     let methods = [
         ("get", path_item.get.as_ref()),
@@ -1134,7 +1191,7 @@ fn convert_path_item(
                 .cloned()
                 .unwrap_or_else(|| "default".to_string());
 
-            services_map.entry(tag).or_insert_with(Vec::new).push(op);
+            services_map.entry(tag).or_default().push(op);
         }
     }
 }
@@ -1145,7 +1202,7 @@ fn convert_operation(
     path: &str,
     method_name: &str,
     operation: &oas3::spec::Operation,
-    global_security: &Option<Vec<oas3::spec::SecurityRequirement>>,
+    global_security: Option<&[oas3::spec::SecurityRequirement]>,
 ) -> Operation {
     let operation_id = operation
         .operation_id
@@ -1225,7 +1282,7 @@ fn convert_operation(
     let auth = if !operation.security.is_empty() {
         convert_security_requirements(Some(&operation.security))
     } else {
-        convert_security_requirements(global_security.as_ref())
+        convert_security_requirements(global_security)
     };
 
     let http = HttpShape {
@@ -1262,7 +1319,7 @@ fn convert_operation(
 
 /// Convert OpenAPI security requirements to AuthUse
 fn convert_security_requirements(
-    security: Option<&Vec<oas3::spec::SecurityRequirement>>,
+    security: Option<&[oas3::spec::SecurityRequirement]>,
 ) -> Vec<AuthUse> {
     let Some(security) = security else {
         return Vec::new();
@@ -1681,7 +1738,7 @@ mod tests {
         assert!(gen_ir.types.contains_key(&company_id));
 
         // Verify all are struct types (since we don't have properties, they'll be empty structs)
-        for (_, type_decl) in &gen_ir.types {
+        for type_decl in gen_ir.types.values() {
             match &type_decl.kind {
                 TypeKind::Struct {
                     fields,
@@ -2090,7 +2147,7 @@ mod tests {
                 .operations
                 .iter()
                 .find(|o| o.name.canonical == op_id)
-                .expect(&format!("Operation {} not found", op_id));
+                .unwrap_or_else(|| panic!("Operation {} not found", op_id));
 
             assert_eq!(op.http.method, expected_method);
         }
@@ -2603,7 +2660,7 @@ mod tests {
     fn generate_pseudo_code(gen_ir: &GenIr) -> String {
         let mut output = String::new();
 
-        for (_, type_decl) in &gen_ir.types {
+        for type_decl in gen_ir.types.values() {
             output.push_str(&format!("type {} = ", type_decl.name.pascal));
 
             match &type_decl.kind {
