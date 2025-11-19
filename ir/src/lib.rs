@@ -256,6 +256,17 @@ fn infer_type_kind(ctx: &mut BuildContext, schema: &oas3::spec::ObjectSchema) ->
         return TypeKind::Enum { base, values };
     }
 
+    // Check for anyOf/oneOf/allOf composition
+    if !schema.any_of.is_empty() {
+        return convert_any_of_to_union(ctx, &schema.any_of);
+    }
+    if !schema.one_of.is_empty() {
+        return convert_one_of_to_union(ctx, &schema.one_of);
+    }
+    if !schema.all_of.is_empty() {
+        return convert_all_of_to_type(ctx, &schema.all_of);
+    }
+
     // Check schema type
     match &schema.schema_type {
         Some(oas3::spec::SchemaTypeSet::Single(oas3::spec::SchemaType::Object)) => {
@@ -321,6 +332,191 @@ fn infer_type_kind(ctx: &mut BuildContext, schema: &oas3::spec::ObjectSchema) ->
     }
 }
 
+/// Convert anyOf to Union TypeKind
+fn convert_any_of_to_union(
+    ctx: &mut BuildContext,
+    schemas: &[oas3::spec::ObjectOrReference<oas3::spec::ObjectSchema>],
+) -> TypeKind {
+    let variants = schemas
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, schema_ref)| {
+            let schema = schema_ref.resolve(ctx.spec).ok()?;
+            let variant_name = schema
+                .title
+                .clone()
+                .unwrap_or_else(|| format!("Variant{}", idx + 1));
+
+            // For anyOf, we need to convert each schema to a TypeRef
+            let ty = convert_schema_ref_to_type_ref(ctx, schema_ref);
+
+            Some(Variant {
+                name: CanonicalName::from_string(&variant_name),
+                docs: Docs {
+                    summary: schema.title.clone(),
+                    description: schema.description.clone(),
+                    deprecated: schema.deprecated.unwrap_or(false),
+                    since: None,
+                    examples: Vec::new(),
+                    external_urls: Vec::new(),
+                },
+                ty,
+                tag_value: None,
+            })
+        })
+        .collect();
+
+    TypeKind::Union {
+        style: UnionStyle::AnyOf,
+        variants,
+    }
+}
+
+/// Convert oneOf to Union TypeKind
+fn convert_one_of_to_union(
+    ctx: &mut BuildContext,
+    schemas: &[oas3::spec::ObjectOrReference<oas3::spec::ObjectSchema>],
+) -> TypeKind {
+    let variants = schemas
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, schema_ref)| {
+            let schema = schema_ref.resolve(ctx.spec).ok()?;
+            let variant_name = schema
+                .title
+                .clone()
+                .unwrap_or_else(|| format!("Variant{}", idx + 1));
+
+            let ty = convert_schema_ref_to_type_ref(ctx, schema_ref);
+
+            Some(Variant {
+                name: CanonicalName::from_string(&variant_name),
+                docs: Docs {
+                    summary: schema.title.clone(),
+                    description: schema.description.clone(),
+                    deprecated: schema.deprecated.unwrap_or(false),
+                    since: None,
+                    examples: Vec::new(),
+                    external_urls: Vec::new(),
+                },
+                ty,
+                tag_value: None,
+            })
+        })
+        .collect();
+
+    TypeKind::Union {
+        style: UnionStyle::OneOf,
+        variants,
+    }
+}
+
+/// Convert allOf to TypeKind
+/// For allOf, we merge all schemas into a single Struct (composition/flattening)
+fn convert_all_of_to_type(
+    ctx: &mut BuildContext,
+    schemas: &[oas3::spec::ObjectOrReference<oas3::spec::ObjectSchema>],
+) -> TypeKind {
+    // Use a BTreeMap to track fields by wire_name and merge duplicates
+    let mut fields_map: BTreeMap<String, Field> = BTreeMap::new();
+    let mut additional = Additional::Any;
+
+    for schema_ref in schemas {
+        if let Ok(schema) = schema_ref.resolve(ctx.spec) {
+            // Merge properties from each schema
+            let required_set: std::collections::HashSet<String> =
+                schema.required.iter().cloned().collect();
+
+            for (prop_name, prop_schema_ref) in &schema.properties {
+                let is_required = required_set.contains(prop_name);
+
+                if let Ok(prop_schema) = prop_schema_ref.resolve(ctx.spec) {
+                    let ty = convert_object_schema_to_type_ref(ctx, &prop_schema);
+                    let is_nullable = prop_schema.is_nullable().unwrap_or(false);
+
+                    let new_field = Field {
+                        name: CanonicalName::from_string(prop_name),
+                        docs: Docs {
+                            summary: prop_schema.title.clone(),
+                            description: prop_schema.description.clone(),
+                            deprecated: prop_schema.deprecated.unwrap_or(false),
+                            since: None,
+                            examples: Vec::new(),
+                            external_urls: Vec::new(),
+                        },
+                        ty: TypeRef {
+                            target: ty.target.clone(),
+                            optional: !is_required,
+                            nullable: is_nullable,
+                            by_ref: false,
+                            modifiers: ty.modifiers.clone(),
+                        },
+                        default: None,
+                        deprecated: prop_schema.deprecated.unwrap_or(false),
+                        wire_name: prop_name.clone(),
+                    };
+
+                    // Merge with existing field if present
+                    if let Some(existing_field) = fields_map.get_mut(prop_name) {
+                        // When merging fields from allOf:
+                        // - If any schema marks it as required, it's required (optional = false)
+                        // - Take the most specific type (prefer non-Any types)
+                        // - Merge documentation (prefer non-empty)
+
+                        // Make field required if any schema requires it
+                        if !new_field.ty.optional {
+                            existing_field.ty.optional = false;
+                        }
+
+                        // Update nullable if new field is nullable
+                        if new_field.ty.nullable {
+                            existing_field.ty.nullable = true;
+                        }
+
+                        // Prefer non-Any types
+                        if existing_field.ty.target == StableId::new("Any")
+                            && new_field.ty.target != StableId::new("Any")
+                        {
+                            existing_field.ty.target = new_field.ty.target;
+                            existing_field.ty.modifiers = new_field.ty.modifiers;
+                        }
+
+                        // Merge documentation (prefer non-empty)
+                        if existing_field.docs.description.is_none()
+                            && new_field.docs.description.is_some()
+                        {
+                            existing_field.docs.description = new_field.docs.description;
+                        }
+                        if existing_field.docs.summary.is_none() && new_field.docs.summary.is_some()
+                        {
+                            existing_field.docs.summary = new_field.docs.summary;
+                        }
+                    } else {
+                        // New field, add it
+                        fields_map.insert(prop_name.clone(), new_field);
+                    }
+                }
+            }
+
+            // Handle additionalProperties from merged schemas
+            if let Some(oas3::spec::Schema::Boolean(oas3::spec::BooleanSchema(false))) =
+                &schema.additional_properties
+            {
+                additional = Additional::Forbidden;
+            }
+        }
+    }
+
+    // Convert map back to vector
+    let all_fields: Vec<Field> = fields_map.into_values().collect();
+
+    TypeKind::Struct {
+        fields: all_fields,
+        additional,
+        discriminator: None,
+    }
+}
+
 /// Convert schema properties to fields
 fn convert_properties(
     ctx: &mut BuildContext,
@@ -339,7 +535,11 @@ fn convert_properties(
                 oas3::spec::ObjectOrReference::Ref { .. } => {
                     // Reference - use normal conversion
                     let prop_schema = prop_schema_ref.resolve(ctx.spec).ok()?;
-                    let ty = convert_object_schema_to_type_ref(ctx, &prop_schema);
+                    let ty = convert_object_schema_to_type_ref_with_hint(
+                        ctx,
+                        &prop_schema,
+                        Some(prop_name),
+                    );
                     let is_nullable = prop_schema.is_nullable().unwrap_or(false);
                     (ty, is_nullable)
                 }
@@ -365,8 +565,12 @@ fn convert_properties(
                         };
                         (ty, is_nullable)
                     } else {
-                        // Simple inline schema - use normal conversion
-                        let ty = convert_object_schema_to_type_ref(ctx, inline_schema);
+                        // Simple inline schema - use normal conversion with hint
+                        let ty = convert_object_schema_to_type_ref_with_hint(
+                            ctx,
+                            inline_schema,
+                            Some(prop_name),
+                        );
                         (ty, is_nullable)
                     }
                 }
@@ -443,7 +647,62 @@ fn convert_object_schema_to_type_ref(
     ctx: &mut BuildContext,
     schema: &oas3::spec::ObjectSchema,
 ) -> TypeRef {
+    convert_object_schema_to_type_ref_with_hint(ctx, schema, None)
+}
+
+/// Convert an ObjectSchema to a TypeRef with optional naming hint
+fn convert_object_schema_to_type_ref_with_hint(
+    ctx: &mut BuildContext,
+    schema: &oas3::spec::ObjectSchema,
+    hint: Option<&str>,
+) -> TypeRef {
     let nullable = schema.is_nullable().unwrap_or(false);
+
+    // Check for anyOf/oneOf/allOf - these need to be hoisted to named types
+    if !schema.any_of.is_empty() || !schema.one_of.is_empty() || !schema.all_of.is_empty() {
+        // Generate a name for this inline union type using the hint if available
+        // If we have a hint, use it directly; otherwise use "Union" as context
+        let type_name = if let Some(h) = hint {
+            generate_inline_type_name(ctx, ctx.current_operation_id.as_deref(), "", Some(h))
+        } else {
+            generate_inline_type_name(ctx, ctx.current_operation_id.as_deref(), "Union", None)
+        };
+
+        // Hoist the union schema to a named type with parent context
+        let type_id =
+            hoist_inline_schema_with_parent(ctx, type_name.clone(), schema, Some(&type_name));
+
+        return TypeRef {
+            target: type_id,
+            optional: false,
+            nullable,
+            by_ref: false,
+            modifiers: Vec::new(),
+        };
+    }
+
+    // Check if this is an object with properties that should be hoisted
+    if should_hoist_schema(schema) {
+        // Use the hint directly for the type name if available
+        // The hint already contains the full context (e.g., "InputItem")
+        let type_name = if let Some(h) = hint {
+            generate_inline_type_name(ctx, ctx.current_operation_id.as_deref(), "", Some(h))
+        } else {
+            generate_inline_type_name(ctx, ctx.current_operation_id.as_deref(), "Object", None)
+        };
+
+        // Hoist with parent context so nested properties use this type name as prefix
+        let type_id =
+            hoist_inline_schema_with_parent(ctx, type_name.clone(), schema, Some(&type_name));
+
+        return TypeRef {
+            target: type_id,
+            optional: false,
+            nullable,
+            by_ref: false,
+            modifiers: Vec::new(),
+        };
+    }
 
     // Check schema type to determine the type
     if let Some(schema_type) = &schema.schema_type {
@@ -464,13 +723,22 @@ fn convert_object_schema_to_type_ref(
             }
             oas3::spec::SchemaTypeSet::Single(oas3::spec::SchemaType::Array) => {
                 if let Some(items) = &schema.items {
-                    let inner_ref = convert_schema_to_type_ref(ctx, items);
+                    // Generate hint for array items: "Input" -> "InputItem"
+                    let item_hint = hint.map(|h| format!("{}Item", h));
+                    let inner_ref = convert_schema_to_type_ref_with_hint_internal(
+                        ctx,
+                        items,
+                        item_hint.as_deref(),
+                    );
+                    // Preserve inner modifiers and add List modifier
+                    let mut modifiers = inner_ref.modifiers.clone();
+                    modifiers.push(TypeMod::List);
                     return TypeRef {
                         target: inner_ref.target,
                         optional: false,
                         nullable,
                         by_ref: false,
-                        modifiers: vec![TypeMod::List],
+                        modifiers,
                     };
                 }
             }
@@ -489,6 +757,15 @@ fn convert_object_schema_to_type_ref(
 
 /// Convert a Schema to a TypeRef (handles both Boolean and Object schemas)
 fn convert_schema_to_type_ref(ctx: &mut BuildContext, schema: &oas3::spec::Schema) -> TypeRef {
+    convert_schema_to_type_ref_with_hint_internal(ctx, schema, None)
+}
+
+/// Convert a Schema to a TypeRef with hint (handles both Boolean and Object schemas)
+fn convert_schema_to_type_ref_with_hint_internal(
+    ctx: &mut BuildContext,
+    schema: &oas3::spec::Schema,
+    hint: Option<&str>,
+) -> TypeRef {
     match schema {
         oas3::spec::Schema::Boolean(oas3::spec::BooleanSchema(true)) => {
             // true schema accepts anything
@@ -510,7 +787,9 @@ fn convert_schema_to_type_ref(ctx: &mut BuildContext, schema: &oas3::spec::Schem
                 modifiers: Vec::new(),
             }
         }
-        oas3::spec::Schema::Object(schema_ref) => convert_schema_ref_to_type_ref(ctx, schema_ref),
+        oas3::spec::Schema::Object(schema_ref) => {
+            convert_schema_ref_to_type_ref_with_hint(ctx, schema_ref, hint)
+        }
     }
 }
 
@@ -518,6 +797,15 @@ fn convert_schema_to_type_ref(ctx: &mut BuildContext, schema: &oas3::spec::Schem
 fn convert_schema_ref_to_type_ref(
     ctx: &mut BuildContext,
     schema_ref: &oas3::spec::ObjectOrReference<oas3::spec::ObjectSchema>,
+) -> TypeRef {
+    convert_schema_ref_to_type_ref_with_hint(ctx, schema_ref, None)
+}
+
+/// Convert a schema ref to a TypeRef with hint
+fn convert_schema_ref_to_type_ref_with_hint(
+    ctx: &mut BuildContext,
+    schema_ref: &oas3::spec::ObjectOrReference<oas3::spec::ObjectSchema>,
+    hint: Option<&str>,
 ) -> TypeRef {
     // Check if this is a reference
     if let oas3::spec::ObjectOrReference::Ref { ref_path, .. } = schema_ref {
@@ -533,9 +821,9 @@ fn convert_schema_ref_to_type_ref(
         };
     }
 
-    // Resolve and convert the inline schema
+    // Resolve and convert the inline schema with hint
     if let Ok(schema) = schema_ref.resolve(ctx.spec) {
-        convert_object_schema_to_type_ref(ctx, &schema)
+        convert_object_schema_to_type_ref_with_hint(ctx, &schema, hint)
     } else {
         TypeRef {
             target: StableId::new("Any"),
@@ -1245,7 +1533,7 @@ mod tests {
     #[test]
     fn test_from_openapi() {
         // Create a minimal OpenAPI document
-        let json = r#"{
+        let json = r##"{
             "openapi": "3.0.0",
             "info": {
                 "title": "Test API",
@@ -1253,7 +1541,7 @@ mod tests {
                 "description": "A test API"
             },
             "paths": {}
-        }"#;
+        }"##;
 
         let doc = parse(json).expect("Failed to parse OpenAPI");
         let gen_ir = GenIr::from(doc);
@@ -1279,7 +1567,7 @@ mod tests {
     #[test]
     fn test_name_disambiguation() {
         // Test that schemas with similar names get unique stable IDs
-        let json = r#"{
+        let json = r##"{
             "openapi": "3.0.0",
             "info": {
                 "title": "Test API",
@@ -1302,7 +1590,7 @@ mod tests {
                     }
                 }
             }
-        }"#;
+        }"##;
 
         let doc = parse(json).expect("Failed to parse OpenAPI");
         let gen_ir = GenIr::from(doc);
@@ -1336,7 +1624,7 @@ mod tests {
     #[test]
     fn test_nested_references() {
         // Test schemas that reference other schemas
-        let json = r#"{
+        let json = r##"{
             "openapi": "3.0.0",
             "info": {
                 "title": "Test API",
@@ -1359,7 +1647,7 @@ mod tests {
                     }
                 }
             }
-        }"#;
+        }"##;
 
         let doc = parse(json).expect("Failed to parse OpenAPI");
         let gen_ir = GenIr::from(doc);
@@ -1396,7 +1684,7 @@ mod tests {
     #[test]
     fn test_discriminated_union_structure() {
         // Test discriminated unions (oneOf with discriminator)
-        let json = r#"{
+        let json = r##"{
             "openapi": "3.0.0",
             "info": {
                 "title": "Test API",
@@ -1419,7 +1707,7 @@ mod tests {
                     }
                 }
             }
-        }"#;
+        }"##;
 
         let doc = parse(json).expect("Failed to parse OpenAPI");
         let gen_ir = GenIr::from(doc);
@@ -1439,7 +1727,7 @@ mod tests {
     #[test]
     fn test_primitive_type_conversion() {
         // Test various primitive types and formats
-        let json = r#"{
+        let json = r##"{
             "openapi": "3.0.0",
             "info": {
                 "title": "Test API",
@@ -1483,7 +1771,7 @@ mod tests {
                     }
                 }
             }
-        }"#;
+        }"##;
 
         let doc = parse(json).expect("Failed to parse OpenAPI");
         let gen_ir = GenIr::from(doc);
@@ -1603,7 +1891,7 @@ mod tests {
     #[test]
     fn test_service_grouping_by_tags() {
         // Test that operations are grouped into services by tags
-        let json = r#"{
+        let json = r##"{
             "openapi": "3.0.0",
             "info": {
                 "title": "Test API",
@@ -1647,7 +1935,7 @@ mod tests {
                     }
                 }
             }
-        }"#;
+        }"##;
 
         let doc = parse(json).expect("Failed to parse OpenAPI");
         let gen_ir = GenIr::from(doc);
@@ -1693,7 +1981,7 @@ mod tests {
     #[test]
     fn test_http_method_conversion() {
         // Test that all HTTP methods are properly converted
-        let json = r#"{
+        let json = r##"{
             "openapi": "3.0.0",
             "info": {
                 "title": "Test API",
@@ -1759,7 +2047,7 @@ mod tests {
                     }
                 }
             }
-        }"#;
+        }"##;
 
         let doc = parse(json).expect("Failed to parse OpenAPI");
         let gen_ir = GenIr::from(doc);
@@ -1794,7 +2082,7 @@ mod tests {
     #[test]
     fn test_idempotent_operations() {
         // Test that idempotency is correctly inferred from HTTP method
-        let json = r#"{
+        let json = r##"{
             "openapi": "3.0.0",
             "info": {
                 "title": "Test API",
@@ -1844,7 +2132,7 @@ mod tests {
                     }
                 }
             }
-        }"#;
+        }"##;
 
         let doc = parse(json).expect("Failed to parse OpenAPI");
         let gen_ir = GenIr::from(doc);
@@ -1892,7 +2180,7 @@ mod tests {
     #[test]
     fn test_inline_schema_hoisting_request_body() {
         // Test that inline request body schemas are hoisted to named types
-        let json = r#"{
+        let json = r##"{
             "openapi": "3.0.0",
             "info": {
                 "title": "Test API",
@@ -1928,7 +2216,7 @@ mod tests {
                     }
                 }
             }
-        }"#;
+        }"##;
 
         let doc = parse(json).unwrap();
         let gen_ir = GenIr::from(doc);
@@ -1967,7 +2255,7 @@ mod tests {
     #[test]
     fn test_inline_schema_hoisting_response() {
         // Test that inline response schemas are hoisted to named types
-        let json = r#"{
+        let json = r##"{
             "openapi": "3.0.0",
             "info": {
                 "title": "Test API",
@@ -2003,7 +2291,7 @@ mod tests {
                     }
                 }
             }
-        }"#;
+        }"##;
 
         let doc = parse(json).unwrap();
         let gen_ir = GenIr::from(doc);
@@ -2043,7 +2331,7 @@ mod tests {
     #[test]
     fn test_inline_schema_hoisting_nested_properties() {
         // Test that nested inline object properties are hoisted
-        let json = r#"{
+        let json = r##"{
             "openapi": "3.0.0",
             "info": {
                 "title": "Test API",
@@ -2086,7 +2374,7 @@ mod tests {
                     }
                 }
             }
-        }"#;
+        }"##;
 
         let doc = parse(json).unwrap();
         let gen_ir = GenIr::from(doc);
@@ -2132,7 +2420,7 @@ mod tests {
     #[test]
     fn test_inline_schema_deduplication() {
         // Test that identical inline schemas are deduplicated
-        let json = r#"{
+        let json = r##"{
             "openapi": "3.0.0",
             "info": {
                 "title": "Test API",
@@ -2188,7 +2476,7 @@ mod tests {
                     }
                 }
             }
-        }"#;
+        }"##;
 
         let doc = parse(json).unwrap();
         let gen_ir = GenIr::from(doc);
@@ -2221,7 +2509,7 @@ mod tests {
     #[test]
     fn test_inline_schema_name_collision_handling() {
         // Test that name collisions are handled with suffixes
-        let json = r#"{
+        let json = r##"{
             "openapi": "3.0.0",
             "info": {
                 "title": "Test API",
@@ -2236,7 +2524,7 @@ mod tests {
                     }
                 }
             }
-        }"#;
+        }"##;
 
         let doc = parse(json).unwrap();
         let gen_ir = GenIr::from(doc);
@@ -2246,14 +2534,14 @@ mod tests {
         assert!(gen_ir.types.contains_key(&existing_type_id));
 
         // If we tried to hoist an inline schema with the same name,
-        // it should get a suffix like CreateTestRequest_2
+        // it should get a suffix like CreateTestRequest2
         // This is implicitly tested by the collision detection logic
     }
 
     #[test]
     fn test_empty_inline_objects_not_hoisted() {
         // Test that empty objects are not hoisted (they remain as Any)
-        let json = r#"{
+        let json = r##"{
             "openapi": "3.0.0",
             "info": {
                 "title": "Test API",
@@ -2280,7 +2568,7 @@ mod tests {
                     }
                 }
             }
-        }"#;
+        }"##;
 
         let doc = parse(json).unwrap();
         let gen_ir = GenIr::from(doc);
@@ -2292,5 +2580,674 @@ mod tests {
 
         // Should be Any, not a hoisted type
         assert_eq!(body_type, &StableId::new("Any"));
+    }
+
+    // Helper function to generate pseudo-code for types
+    fn generate_pseudo_code(gen_ir: &GenIr) -> String {
+        let mut output = String::new();
+
+        for (_, type_decl) in &gen_ir.types {
+            output.push_str(&format!("type {} = ", type_decl.name.pascal));
+
+            match &type_decl.kind {
+                TypeKind::Struct {
+                    fields, additional, ..
+                } => {
+                    output.push_str("{\n");
+                    for field in fields {
+                        let opt = if field.ty.optional { "?" } else { "" };
+                        let nullable = if field.ty.nullable { " | null" } else { "" };
+                        let mut type_str = field.ty.target.0.clone();
+
+                        // Handle modifiers (like List)
+                        for modifier in &field.ty.modifiers {
+                            if matches!(modifier, crate::gen_ir::TypeMod::List) {
+                                type_str = format!("{}[]", type_str);
+                            }
+                        }
+
+                        output.push_str(&format!(
+                            "  {}{}: {}{}\n",
+                            field.name.camel, opt, type_str, nullable
+                        ));
+                    }
+                    match additional {
+                        Additional::Forbidden => {
+                            output.push_str("  [key: string]: never\n");
+                        }
+                        Additional::Any => {
+                            output.push_str("  [key: string]: any\n");
+                        }
+                        _ => {}
+                    }
+                    output.push_str("}\n\n");
+                }
+                TypeKind::Enum { base, values } => {
+                    output.push_str(&format!("enum<{:?}> {{\n", base));
+                    for value in values {
+                        output.push_str(&format!("  {} = {:?}\n", value.name.pascal, value.wire));
+                    }
+                    output.push_str("}\n\n");
+                }
+                TypeKind::Alias { aliased } => match aliased {
+                    AliasTarget::Primitive(p) => {
+                        output.push_str(&format!("{:?}\n\n", p));
+                    }
+                    AliasTarget::Composite(c) => {
+                        output.push_str(&format!("{:?}\n\n", c));
+                    }
+                    AliasTarget::Reference(r) => {
+                        output.push_str(&format!("{}\n\n", r.target.0));
+                    }
+                },
+                TypeKind::Union { style, variants } => {
+                    output.push_str(&format!("union<{:?}> {{\n", style));
+                    for variant in variants {
+                        let type_str = &variant.ty.target.0;
+                        output.push_str(&format!("  {}: {}\n", variant.name.pascal, type_str));
+                    }
+                    output.push_str("}\n\n");
+                }
+            }
+        }
+
+        output
+    }
+
+    #[test]
+    fn test_oneof_basic() {
+        // Test oneOf - exactly one schema must match
+        // Example: Pet can be a Cat OR a Dog (mutually exclusive)
+        let json = r##"{
+            "openapi": "3.0.0",
+            "info": {
+                "title": "Test API",
+                "version": "1.0.0"
+            },
+            "paths": {},
+            "components": {
+                "schemas": {
+                    "Cat": {
+                        "type": "object",
+                        "properties": {
+                            "meow": { "type": "string" }
+                        }
+                    },
+                    "Dog": {
+                        "type": "object",
+                        "properties": {
+                            "bark": { "type": "string" }
+                        }
+                    },
+                    "Pet": {
+                        "oneOf": [
+                            { "$ref": "#/components/schemas/Cat" },
+                            { "$ref": "#/components/schemas/Dog" }
+                        ]
+                    }
+                }
+            }
+        }"##;
+
+        let doc = parse(json).unwrap();
+        let gen_ir = GenIr::from(doc);
+
+        // Generate pseudo-code
+        let pseudo_code = generate_pseudo_code(&gen_ir);
+
+        // Check against the ENTIRE pseudo-code output
+        // This is what SHOULD be generated for oneOf with $ref
+        let expected = r##"type Cat = {
+  meow?: Primitive_String
+  [key: string]: any
+}
+
+type Dog = {
+  bark?: Primitive_String
+  [key: string]: any
+}
+
+type Pet = union<OneOf> {
+  Cat: Cat
+  Dog: Dog
+}
+
+"##;
+        assert_eq!(
+            pseudo_code.trim(),
+            expected.trim(),
+            "Generated pseudo-code doesn't match expected output.\n\nActual output:\n{}\n\nExpected:\n{}",
+            pseudo_code,
+            expected
+        );
+    }
+
+    #[test]
+    fn test_anyof_basic() {
+        // Test anyOf - any number of schemas can match
+        // Example: ParkingSpot can be Paid AND/OR Covered
+        let json = r##"{
+            "openapi": "3.0.0",
+            "info": {
+                "title": "Test API",
+                "version": "1.0.0"
+            },
+            "paths": {},
+            "components": {
+                "schemas": {
+                    "Paid": {
+                        "type": "object",
+                        "properties": {
+                            "price": { "type": "number" },
+                            "currency": { "type": "string" }
+                        }
+                    },
+                    "Covered": {
+                        "type": "object",
+                        "properties": {
+                            "roofType": { "type": "string" }
+                        }
+                    },
+                    "ParkingSpot": {
+                        "anyOf": [
+                            { "$ref": "#/components/schemas/Paid" },
+                            { "$ref": "#/components/schemas/Covered" }
+                        ]
+                    }
+                }
+            }
+        }"##;
+
+        let doc = parse(json).unwrap();
+        let gen_ir = GenIr::from(doc);
+
+        let pseudo_code = generate_pseudo_code(&gen_ir);
+
+        // Check against the ENTIRE pseudo-code output
+        // This is what SHOULD be generated for anyOf with $ref
+        // Note: Field order might vary due to BTreeMap
+        let expected = r##"type Covered = {
+  roofType?: Primitive_String
+  [key: string]: any
+}
+
+type Paid = {
+  currency?: Primitive_String
+  price?: Primitive_F32
+  [key: string]: any
+}
+
+type ParkingSpot = union<AnyOf> {
+  Paid: Paid
+  Covered: Covered
+}
+
+"##;
+        assert_eq!(
+            pseudo_code.trim(),
+            expected.trim(),
+            "Generated pseudo-code doesn't match expected output"
+        );
+    }
+
+    #[test]
+    fn test_allof_basic() {
+        // Test allOf - all schemas must match (composition/inheritance)
+        // Example: Cat extends Pet and adds cat-specific properties
+        let json = r##"{
+            "openapi": "3.0.0",
+            "info": {
+                "title": "Test API",
+                "version": "1.0.0"
+            },
+            "paths": {},
+            "components": {
+                "schemas": {
+                    "Pet": {
+                        "type": "object",
+                        "properties": {
+                            "name": { "type": "string" },
+                            "age": { "type": "integer" }
+                        },
+                        "required": ["name"]
+                    },
+                    "Cat": {
+                        "allOf": [
+                            { "$ref": "#/components/schemas/Pet" },
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "meow": { "type": "string" },
+                                    "indoor": { "type": "boolean" }
+                                },
+                                "required": ["indoor"]
+                            }
+                        ]
+                    }
+                }
+            }
+        }"##;
+
+        let doc = parse(json).unwrap();
+        let gen_ir = GenIr::from(doc);
+
+        let pseudo_code = generate_pseudo_code(&gen_ir);
+
+        // Check against the ENTIRE pseudo-code output
+        let expected = r#"type Cat = {
+  age?: Primitive_I32
+  indoor: Primitive_Bool
+  meow?: Primitive_String
+  name: Primitive_String
+  [key: string]: any
+}
+
+type Pet = {
+  age?: Primitive_I32
+  name: Primitive_String
+  [key: string]: any
+}
+
+"#;
+        assert_eq!(
+            pseudo_code.trim(),
+            expected.trim(),
+            "Generated pseudo-code doesn't match expected output"
+        );
+    }
+
+    #[test]
+    fn test_oneof_with_inline_schemas() {
+        // Test oneOf with inline object schemas (not references)
+        let json = r##"{
+            "openapi": "3.0.0",
+            "info": {
+                "title": "Test API",
+                "version": "1.0.0"
+            },
+            "paths": {},
+            "components": {
+                "schemas": {
+                    "Response": {
+                        "oneOf": [
+                            {
+                                "type": "object",
+                                "title": "Success",
+                                "properties": {
+                                    "data": { "type": "string" }
+                                }
+                            },
+                            {
+                                "type": "object",
+                                "title": "Error",
+                                "properties": {
+                                    "error": { "type": "string" }
+                                }
+                            }
+                        ]
+                    }
+                }
+            }
+        }"##;
+
+        let doc = parse(json).unwrap();
+        let gen_ir = GenIr::from(doc);
+
+        let pseudo_code = generate_pseudo_code(&gen_ir);
+
+        // Check against the ENTIRE pseudo-code output
+        // Inline schemas with "title" should be hoisted to named types
+        let expected = r##"type InlineTypeObject = {
+  data?: Primitive_String
+  [key: string]: any
+}
+
+type InlineTypeObject2 = {
+  error?: Primitive_String
+  [key: string]: any
+}
+
+type Response = union<OneOf> {
+  Success: InlineTypeObject
+  Error: InlineTypeObject2
+}
+
+"##;
+        assert_eq!(
+            pseudo_code.trim(),
+            expected.trim(),
+            "Generated pseudo-code doesn't match expected output"
+        );
+    }
+
+    #[test]
+    fn test_allof_multiple_objects() {
+        // Test allOf with multiple object schemas merging their properties
+        let json = r##"{
+            "openapi": "3.0.0",
+            "info": {
+                "title": "Test API",
+                "version": "1.0.0"
+            },
+            "paths": {},
+            "components": {
+                "schemas": {
+                    "HasId": {
+                        "type": "object",
+                        "properties": {
+                            "id": { "type": "string" }
+                        },
+                        "required": ["id"]
+                    },
+                    "HasTimestamps": {
+                        "type": "object",
+                        "properties": {
+                            "createdAt": { "type": "string", "format": "date-time" },
+                            "updatedAt": { "type": "string", "format": "date-time" }
+                        },
+                        "required": ["createdAt"]
+                    },
+                    "User": {
+                        "allOf": [
+                            { "$ref": "#/components/schemas/HasId" },
+                            { "$ref": "#/components/schemas/HasTimestamps" },
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "name": { "type": "string" },
+                                    "email": { "type": "string" }
+                                },
+                                "required": ["email"]
+                            }
+                        ]
+                    }
+                }
+            }
+        }"##;
+
+        let doc = parse(json).unwrap();
+        let gen_ir = GenIr::from(doc);
+
+        let pseudo_code = generate_pseudo_code(&gen_ir);
+
+        // Check against the ENTIRE pseudo-code output
+        // allOf should merge all fields from all schemas, respecting required fields
+        let expected = r##"type HasId = {
+  id: Primitive_String
+  [key: string]: any
+}
+
+type HasTimestamps = {
+  createdAt: Primitive_DateTime
+  updatedAt?: Primitive_DateTime
+  [key: string]: any
+}
+
+type User = {
+  createdAt: Primitive_DateTime
+  email: Primitive_String
+  id: Primitive_String
+  name?: Primitive_String
+  updatedAt?: Primitive_DateTime
+  [key: string]: any
+}
+
+"##;
+        assert_eq!(
+            pseudo_code.trim(),
+            expected.trim(),
+            "Generated pseudo-code doesn't match expected output"
+        );
+    }
+
+    #[test]
+    fn test_anyof_with_primitives() {
+        // Test anyOf with primitive types
+        let json = r##"{
+            "openapi": "3.0.0",
+            "info": {
+                "title": "Test API",
+                "version": "1.0.0"
+            },
+            "paths": {},
+            "components": {
+                "schemas": {
+                    "StringOrNumber": {
+                        "anyOf": [
+                            { "type": "string" },
+                            { "type": "number" }
+                        ]
+                    }
+                }
+            }
+        }"##;
+
+        let doc = parse(json).unwrap();
+        let gen_ir = GenIr::from(doc);
+
+        let pseudo_code = generate_pseudo_code(&gen_ir);
+
+        // Verify StringOrNumber is a union
+        let type_decl = gen_ir.types.get(&StableId::new("StringOrNumber")).unwrap();
+        match &type_decl.kind {
+            TypeKind::Union { style, variants } => {
+                assert!(matches!(style, crate::gen_ir::UnionStyle::AnyOf));
+                assert_eq!(variants.len(), 2);
+            }
+            _ => panic!("Expected Union type for anyOf with primitives"),
+        }
+
+        assert!(pseudo_code.contains("type StringOrNumber = union<AnyOf>"));
+    }
+
+    #[test]
+    fn test_nested_allof() {
+        // Test nested allOf (allOf containing allOf)
+        let json = r##"{
+            "openapi": "3.0.0",
+            "info": {
+                "title": "Test API",
+                "version": "1.0.0"
+            },
+            "paths": {},
+            "components": {
+                "schemas": {
+                    "Base": {
+                        "type": "object",
+                        "properties": {
+                            "id": { "type": "string" }
+                        }
+                    },
+                    "Middle": {
+                        "allOf": [
+                            { "$ref": "#/components/schemas/Base" },
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "name": { "type": "string" }
+                                }
+                            }
+                        ]
+                    },
+                    "Final": {
+                        "allOf": [
+                            { "$ref": "#/components/schemas/Middle" },
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "email": { "type": "string" }
+                                }
+                            }
+                        ]
+                    }
+                }
+            }
+        }"##;
+
+        let doc = parse(json).unwrap();
+        let gen_ir = GenIr::from(doc);
+
+        let pseudo_code = generate_pseudo_code(&gen_ir);
+
+        // Check against the ENTIRE pseudo-code output
+        // nested allOf: Middle should merge Base, Final should merge Middle
+        let expected = r##"type Base = {
+  id?: Primitive_String
+  [key: string]: any
+}
+
+type Final = {
+  email?: Primitive_String
+  id?: Primitive_String
+  name?: Primitive_String
+  [key: string]: any
+}
+
+type Middle = {
+  id?: Primitive_String
+  name?: Primitive_String
+  [key: string]: any
+}
+
+"##;
+        assert_eq!(
+            pseudo_code.trim(),
+            expected.trim(),
+            "Generated pseudo-code doesn't match expected output"
+        );
+    }
+
+    #[test]
+    fn test_discriminated_union_with_oneof() {
+        // Test oneOf with discriminator property
+        let json = r##"{
+            "openapi": "3.0.0",
+            "info": {
+                "title": "Test API",
+                "version": "1.0.0"
+            },
+            "paths": {},
+            "components": {
+                "schemas": {
+                    "Cat": {
+                        "type": "object",
+                        "properties": {
+                            "petType": { "type": "string" },
+                            "meow": { "type": "string" }
+                        },
+                        "required": ["petType"]
+                    },
+                    "Dog": {
+                        "type": "object",
+                        "properties": {
+                            "petType": { "type": "string" },
+                            "bark": { "type": "string" }
+                        },
+                        "required": ["petType"]
+                    },
+                    "Pet": {
+                        "oneOf": [
+                            { "$ref": "#/components/schemas/Cat" },
+                            { "$ref": "#/components/schemas/Dog" }
+                        ],
+                        "discriminator": {
+                            "propertyName": "petType"
+                        }
+                    }
+                }
+            }
+        }"##;
+
+        let doc = parse(json).unwrap();
+        let gen_ir = GenIr::from(doc);
+
+        let pseudo_code = generate_pseudo_code(&gen_ir);
+
+        // Check against the ENTIRE pseudo-code output
+        // oneOf with discriminator should still create a union with proper references
+        let expected = r##"type Cat = {
+  meow?: Primitive_String
+  petType: Primitive_String
+  [key: string]: any
+}
+
+type Dog = {
+  bark?: Primitive_String
+  petType: Primitive_String
+  [key: string]: any
+}
+
+type Pet = union<OneOf> {
+  Cat: Cat
+  Dog: Dog
+}
+
+"##;
+        assert_eq!(
+            pseudo_code.trim(),
+            expected.trim(),
+            "Generated pseudo-code doesn't match expected output"
+        );
+    }
+
+    #[test]
+    fn test_allof_with_additional_properties() {
+        // Test allOf respects additionalProperties from merged schemas
+        let json = r##"{
+            "openapi": "3.0.0",
+            "info": {
+                "title": "Test API",
+                "version": "1.0.0"
+            },
+            "paths": {},
+            "components": {
+                "schemas": {
+                    "Base": {
+                        "type": "object",
+                        "properties": {
+                            "id": { "type": "string" }
+                        },
+                        "additionalProperties": true
+                    },
+                    "Extended": {
+                        "allOf": [
+                            { "$ref": "#/components/schemas/Base" },
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "name": { "type": "string" }
+                                },
+                                "additionalProperties": false
+                            }
+                        ]
+                    }
+                }
+            }
+        }"##;
+
+        let doc = parse(json).unwrap();
+        let gen_ir = GenIr::from(doc);
+
+        let pseudo_code = generate_pseudo_code(&gen_ir);
+
+        // Check against the ENTIRE pseudo-code output
+        // allOf should respect the most restrictive additionalProperties setting
+        let expected = r##"type Base = {
+  id?: Primitive_String
+  [key: string]: any
+}
+
+type Extended = {
+  id?: Primitive_String
+  name?: Primitive_String
+  [key: string]: never
+}
+
+"##;
+        assert_eq!(
+            pseudo_code.trim(),
+            expected.trim(),
+            "Generated pseudo-code doesn't match expected output"
+        );
     }
 }

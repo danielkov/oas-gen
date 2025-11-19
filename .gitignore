@@ -4,12 +4,6 @@
 *.pdb
 Cargo.lock
 
-# Generated output
-petstore-typescript/
-*-typescript/
-*-python/
-*-rust/
-
 # IDEs
 .idea/
 .vscode/
@@ -22,4 +16,4 @@ petstore-typescript/
 *.profraw
 *.profdata
 
-test-generated
+test-generated/

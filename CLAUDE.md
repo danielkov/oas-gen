@@ -25,13 +25,14 @@ cargo test -p ast
 cargo test -p codegen
 cargo test -p typescript
 
-# Run the CLI (development)
-cargo run --bin oas-gen -- examples/petstore.json -t typescript -v
-
-# Or use make targets
+# Use make targets
 make run              # Generate from petstore example
 make run-unkey        # Generate from unkey example
 make run-stripe       # Generate from stripe example
+make run-openrouter   # Generate from openrouter example
+
+# Or run the CLI (development)
+cargo run --bin oas-gen -- examples/petstore.json -t typescript -v
 
 # Build release binary
 cargo build --release
@@ -73,6 +74,7 @@ Note: There are legacy crates (`parser/`, `ast/`) that are being phased out. Use
 ### Key Data Structures
 
 **GenIr** (in `ir/gen_ir.rs`): The language-agnostic intermediate representation containing:
+
 - `types: BTreeMap<StableId, TypeDecl>` - All type definitions
 - `services: Vec<Service>` - Grouped operations
 - `auth_schemes: Vec<AuthScheme>` - Authentication methods
@@ -80,14 +82,17 @@ Note: There are legacy crates (`parser/`, `ast/`) that are being phased out. Use
 - `api: ApiMeta` - API metadata
 
 **TypeDecl**: Represents types (Struct, Enum, Alias)
+
 - Uses `StableId` for stable type references across renames
 - Contains `CanonicalName` with multiple case styles (snake, pascal, camel, kebab, upper)
 
 **Service**: Groups related API operations
+
 - Operations grouped by OpenAPI tags
 - Each operation has full HTTP metadata (method, path, params, body, responses)
 
 **VirtualFS**: In-memory filesystem for generated code
+
 - All generation happens in memory before atomic disk write
 - Supports both text and binary files
 
@@ -111,11 +116,13 @@ pub trait Generator: Send + Sync {
 ## Configuration Options
 
 **ServiceStyle** (affects how operations are organized):
+
 - `PerService` (default): One file per service (grouped by OpenAPI tags)
 - `SingleClient`: All operations in one client
 - `ByTag`: Group by OpenAPI tags (similar to PerService)
 
 **Config** struct:
+
 - `service_style: ServiceStyle`
 - `include_docs: bool` - Whether to generate documentation comments
 - `lang_options: BTreeMap<String, Value>` - Language-specific options
@@ -125,6 +132,7 @@ pub trait Generator: Send + Sync {
 1. Create new crate: `cargo new --lib templates/python`
 
 2. Add dependencies in `templates/python/Cargo.toml`:
+
 ```toml
 [dependencies]
 codegen = { path = "../../codegen" }
@@ -136,6 +144,7 @@ serde = { version = "1.0", features = ["derive"] }
 3. Implement `Generator` trait in `templates/python/src/lib.rs`
 
 4. Register in `generate/Cargo.toml`:
+
 ```toml
 [dependencies]
 python = { path = "../templates/python", optional = true }
@@ -146,12 +155,14 @@ python = ["dep:python"]
 ```
 
 5. Register in `generate/src/lib.rs`:
+
 ```rust
 #[cfg(feature = "python")]
 registry.register(Box::new(python::PythonGenerator::new()));
 ```
 
 6. Update workspace in root `Cargo.toml`:
+
 ```toml
 members = [..., "templates/python"]
 ```
@@ -161,6 +172,7 @@ members = [..., "templates/python"]
 ### Converting OpenAPI to GenIR
 
 The conversion happens in `ir/src/lib.rs`:
+
 ```rust
 let spec: oas3::spec::Spec = parser2::parse(&json)?;
 let gen_ir: GenIr = spec.into();  // Uses From trait
@@ -169,6 +181,7 @@ let gen_ir: GenIr = spec.into();  // Uses From trait
 ### Using the Generator
 
 From CLI or integration code:
+
 ```rust
 let registry = generate::GeneratorRegistry::with_defaults();
 let vfs = registry.generate("typescript", &gen_ir, &config)?;
@@ -179,6 +192,7 @@ registry.after_write_to_disk("typescript", &output_dir, &vfs)?;
 ### CanonicalName for Type-Safe Naming
 
 All names (types, fields, operations) use `CanonicalName` which provides multiple case styles:
+
 ```rust
 let name = CanonicalName::from_string("my-api-name");
 // name.snake → "my_api_name"
@@ -191,6 +205,7 @@ let name = CanonicalName::from_string("my-api-name");
 ### StableId for Type References
 
 Types use `StableId` instead of strings for stability:
+
 ```rust
 let id = StableId::new("User");
 gen_ir.types.get(&id)  // Access type by stable ID
@@ -199,10 +214,12 @@ gen_ir.types.get(&id)  // Access type by stable ID
 ## Error Handling
 
 **In CLI** (`cli/`):
+
 - Use `anyhow::Result` for rich error messages
 - Add context with `.context("description")?`
 
 **In Libraries** (all other crates):
+
 - Use `thiserror` for structured error types
 - Define custom error enums with `#[derive(Error)]`
 - Return custom `Result<T>` type
@@ -263,22 +280,26 @@ oas-gen spec.json -t typescript -o ./sdk --service-style single-client -v
 ### When Making Changes
 
 **Core Type Changes** (in `codegen/` or `ir/`):
+
 1. Update the type definition
 2. Rebuild all: `cargo clean && cargo build`
 3. Update all templates to handle the change
 4. Update tests
 
 **Template Changes** (in `templates/<lang>/`):
+
 1. Modify generator code or templates
 2. Test: `cargo run --bin oas-gen -- examples/petstore.json -t <lang> -v`
 3. Verify generated code compiles in target language
 
 **Parser Changes** (in `parser2/`):
+
 1. Modify parsing logic
 2. Test: `cargo test -p parser2`
 3. Ensure GenIR conversion in `ir/` handles new structures
 
 **CLI Changes** (in `cli/`):
+
 1. Update argument parsing or main flow
 2. Test: `cargo run --bin oas-gen -- examples/petstore.json -t typescript -v`
 
