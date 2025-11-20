@@ -1,6 +1,6 @@
 {% if !type_imports.is_empty() %}import { {% for type_import in type_imports %}{{ type_import }}{% if !loop.last %}, {% endif %}{% endfor %} } from '../types';
 
-{% endif %}import { SecurityConfig } from './client';
+{% endif %}{% if !auth_schemes.is_empty() %}import { SecurityConfig } from './client';{% endif %}
 
 {% if let Some(summary) = docs.summary %}/**
  * {{ summary }}
@@ -8,7 +8,7 @@
  * {{ description }}
 {% endif %} */
 {% endif %}export class {{ name.pascal }}Service {
-  constructor(private baseUrl: string, private security: SecurityConfig) {}
+  constructor(private baseUrl: string, {% if !auth_schemes.is_empty() %}private security: SecurityConfig{% endif %}) {}
 
 {% for operation in operations %}  {% if let Some(summary) = operation.docs.summary %}/**
    * {{ summary }}

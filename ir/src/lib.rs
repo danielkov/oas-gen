@@ -1504,88 +1504,88 @@ fn convert_responses(
 
     // Look for 2xx success responses
     for (status_code, response_ref) in responses {
-        if let Ok(code) = status_code.parse::<u16>() {
-            if (200..300).contains(&code) {
-                // Resolve the response
-                if let Ok(response) = response_ref.resolve(ctx.spec) {
-                    // Get first content type
-                    if let Some((content_type, media_type)) = response.content.iter().next() {
-                        produces.push(content_type.clone());
+        if let Ok(code) = status_code.parse::<u16>()
+            && (200..300).contains(&code)
+        {
+            // Resolve the response
+            if let Ok(response) = response_ref.resolve(ctx.spec) {
+                // Get first content type
+                if let Some((content_type, media_type)) = response.content.iter().next() {
+                    produces.push(content_type.clone());
 
-                        if let Some(schema_ref) = &media_type.schema {
-                            // Check if this is an inline schema that should be hoisted
-                            let ty = match schema_ref {
-                                oas3::spec::ObjectOrReference::Ref { .. } => {
-                                    // Reference - use normal conversion
+                    if let Some(schema_ref) = &media_type.schema {
+                        // Check if this is an inline schema that should be hoisted
+                        let ty = match schema_ref {
+                            oas3::spec::ObjectOrReference::Ref { .. } => {
+                                // Reference - use normal conversion
+                                convert_schema_ref_to_type_ref(ctx, schema_ref)
+                            }
+                            oas3::spec::ObjectOrReference::Object(inline_schema) => {
+                                // Inline schema - check if we should hoist it
+                                if should_hoist_schema(inline_schema) {
+                                    // Hoist inline schema
+                                    let type_name = generate_inline_type_name(
+                                        ctx,
+                                        ctx.current_operation_id.as_deref(),
+                                        "Response",
+                                        None,
+                                    );
+                                    let type_id = hoist_inline_schema_with_parent(
+                                        ctx,
+                                        type_name.clone(),
+                                        inline_schema,
+                                        Some(&type_name),
+                                    );
+                                    TypeRef {
+                                        target: type_id,
+                                        optional: false,
+                                        nullable: inline_schema.is_nullable().unwrap_or(false),
+                                        by_ref: false,
+                                        modifiers: Vec::new(),
+                                    }
+                                } else {
+                                    // Simple inline schema - use normal conversion
                                     convert_schema_ref_to_type_ref(ctx, schema_ref)
                                 }
-                                oas3::spec::ObjectOrReference::Object(inline_schema) => {
-                                    // Inline schema - check if we should hoist it
-                                    if should_hoist_schema(inline_schema) {
-                                        // Hoist inline schema
-                                        let type_name = generate_inline_type_name(
-                                            ctx,
-                                            ctx.current_operation_id.as_deref(),
-                                            "Response",
-                                            None,
-                                        );
-                                        let type_id = hoist_inline_schema_with_parent(
-                                            ctx,
-                                            type_name.clone(),
-                                            inline_schema,
-                                            Some(&type_name),
-                                        );
-                                        TypeRef {
-                                            target: type_id,
-                                            optional: false,
-                                            nullable: inline_schema.is_nullable().unwrap_or(false),
-                                            by_ref: false,
-                                            modifiers: Vec::new(),
-                                        }
-                                    } else {
-                                        // Simple inline schema - use normal conversion
-                                        convert_schema_ref_to_type_ref(ctx, schema_ref)
-                                    }
-                                }
-                            };
+                            }
+                        };
 
-                            let payload = Payload {
-                                status: StatusSpec::Code(code),
-                                content_type: Some(content_type.clone()),
-                                ty: Some(ty),
-                                headers: Vec::new(), // TODO: convert response headers
-                                docs: Docs {
-                                    summary: response.description.clone(),
-                                    description: None,
-                                    deprecated: false,
-                                    since: None,
-                                    examples: Vec::new(),
-                                    external_urls: Vec::new(),
-                                },
-                            };
+                        let payload = Payload {
+                            status: StatusSpec::Code(code),
+                            content_type: Some(content_type.clone()),
+                            ty: Some(ty),
+                            headers: Vec::new(), // TODO: convert response headers
+                            docs: Docs {
+                                summary: response.description.clone(),
+                                description: None,
+                                deprecated: false,
+                                since: None,
+                                examples: Vec::new(),
+                                external_urls: Vec::new(),
+                            },
+                        };
 
-                            return (Some(payload), produces);
-                        }
+                        return (Some(payload), produces);
                     }
-
-                    // Response with no content
-                    let payload = Payload {
-                        status: StatusSpec::Code(code),
-                        content_type: None,
-                        ty: None,
-                        headers: Vec::new(),
-                        docs: Docs {
-                            summary: response.description.clone(),
-                            description: None,
-                            deprecated: false,
-                            since: None,
-                            examples: Vec::new(),
-                            external_urls: Vec::new(),
-                        },
-                    };
-
-                    return (Some(payload), produces);
                 }
+
+                // Response with no content
+                let payload = Payload {
+                    status: StatusSpec::Code(code),
+                    content_type: None,
+                    ty: None,
+                    headers: Vec::new(),
+                    docs: Docs {
+                        summary: response.description.clone(),
+                        description: None,
+                        deprecated: false,
+                        since: None,
+                        examples: Vec::new(),
+                        external_urls: Vec::new(),
+                    },
+                };
+
+                return (Some(payload), produces);
             }
         }
     }

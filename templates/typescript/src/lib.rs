@@ -279,6 +279,7 @@ impl TypeScriptGenerator {
             docs: &service.docs,
             type_imports: type_imports_vec,
             operations,
+            auth_schemes: &ir.auth_schemes,
         };
         data.render().map_err(|e| Error::TemplateError(Box::new(e)))
     }
@@ -656,6 +657,7 @@ struct ServiceTemplate<'a> {
     docs: &'a ir::gen_ir::Docs,
     type_imports: Vec<String>,
     operations: Vec<OperationData>,
+    auth_schemes: &'a [ir::gen_ir::AuthScheme],
 }
 
 struct OperationData {

@@ -17,18 +17,16 @@ export interface SecurityConfig {
  */
 {% endif %}export class {{ api.package_name.pascal }}SDK {
   {% for service in services %}private _{{ service.name.camel }}: {{ service.name.pascal }}Service | undefined;
-  {% endfor %}private security: SecurityConfig;
+  {% endfor %}
 
-  constructor({% if !auth_schemes.is_empty() %}security: SecurityConfig, {% endif %}private baseUrl: string = '{{ default_base_url }}') {
-    this.security = {% if !auth_schemes.is_empty() %}security{% else %}{}{% endif %};
-  }
+  constructor({% if !auth_schemes.is_empty() %}private security: SecurityConfig, {% endif %}private baseUrl: string = '{{ default_base_url }}') {}
 
 {% for service in services %}  {% if let Some(summary) = service.docs.summary %}/**
    * {{ summary }}
    */
   {% endif %}get {{ service.name.camel }}(): {{ service.name.pascal }}Service {
     if (!this._{{ service.name.camel }}) {
-      this._{{ service.name.camel }} = new {{ service.name.pascal }}Service(this.baseUrl, this.security);
+      this._{{ service.name.camel }} = new {{ service.name.pascal }}Service(this.baseUrl{% if !auth_schemes.is_empty() %}, this.security{% endif %});
     }
     return this._{{ service.name.camel }};
   }
