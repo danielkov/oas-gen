@@ -162,7 +162,7 @@ mod tests {
         Additional, ApiMeta, CanonicalName, Docs, Field, Literal, StableId, TypeDecl, TypeKind,
         TypeRef,
     };
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
 
     /// Mock generator for testing
     struct MockGenerator;
@@ -180,10 +180,7 @@ mod tests {
 
                 if let TypeKind::Struct { fields, .. } = &type_decl.kind {
                     for field in fields {
-                        output.push_str(&format!(
-                            "- {}: {}",
-                            field.name.camel, field.ty.target.0
-                        ));
+                        output.push_str(&format!("- {}: {}", field.name.camel, field.ty.target.0));
 
                         if let Some(const_val) = &field.const_value {
                             output.push_str(&format!(" = const {:?}", const_val));
@@ -266,6 +263,7 @@ mod tests {
                 discriminator: None,
             },
             origin: None,
+            tags: BTreeSet::new(),
         };
 
         types.insert(StableId::new("Pet"), pet_type);

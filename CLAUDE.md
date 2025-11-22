@@ -348,3 +348,4 @@ eprintln!("Generating type: {:?}", type_decl.name);
 # Run specific test with output
 cargo test test_name -- --nocapture
 ```
+- no TODOs use cargo expand to debug macro output

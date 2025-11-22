@@ -25,95 +25,63 @@ impl RustAxumGenerator {
         Self
     }
 
-    /// Generate types organized by tags
+    /// Generate types in a single file with feature flags
     fn generate_types(&self, ir: &GenIr, _config: &Config, vfs: &mut VirtualFS) -> Result<()> {
-        let types_by_tag = self.group_types_by_tag(ir);
+        let mut content = String::from("//! API types\n\nuse serde::{Deserialize, Serialize};\n\n");
 
-        for (tag, types) in &types_by_tag {
-            let module_name = CanonicalName::from_string(tag);
-            self.generate_tag_types_module(tag, &module_name, types, ir, vfs)?;
-        }
-
-        // Generate types/mod.rs
-        self.generate_types_mod(&types_by_tag, vfs)?;
-
-        Ok(())
-    }
-
-    /// Group types by their tags
-    fn group_types_by_tag<'a>(&self, ir: &'a GenIr) -> BTreeMap<String, Vec<&'a TypeDecl>> {
-        let mut types_by_tag: BTreeMap<String, Vec<&'a TypeDecl>> = BTreeMap::new();
-
+        // Group types by their tags for feature flag generation
+        let mut type_features: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         for type_decl in ir.types.values() {
+            let mut features = BTreeSet::new();
             if type_decl.tags.is_empty() {
-                types_by_tag
-                    .entry("common".to_string())
-                    .or_default()
-                    .push(type_decl);
+                // Types with no tags are always included (no feature flag)
             } else {
                 for tag in &type_decl.tags {
-                    types_by_tag.entry(tag.clone()).or_default().push(type_decl);
+                    let feature_name = CanonicalName::from_string(tag).snake;
+                    features.insert(feature_name);
                 }
             }
+            type_features.insert(type_decl.name.pascal.clone(), features);
         }
 
-        types_by_tag
-    }
+        // Generate each type with its feature flags
+        for type_decl in ir.types.values() {
+            let features = &type_features[&type_decl.name.pascal];
 
-    /// Generate types module for a tag
-    fn generate_tag_types_module(
-        &self,
-        tag: &str,
-        module_name: &CanonicalName,
-        types: &[&TypeDecl],
-        ir: &GenIr,
-        vfs: &mut VirtualFS,
-    ) -> Result<()> {
-        let mut type_impls = Vec::new();
-
-        for type_decl in types {
-            let rendered = self.render_type(type_decl, ir)?;
-            type_impls.push(rendered);
-        }
-
-        let content = format!(
-            "//! Types for {} API\n\nuse serde::{{Deserialize, Serialize}};\n\n{}",
-            tag,
-            type_impls.join("\n\n")
-        );
-
-        let file_path = PathBuf::from("src")
-            .join("types")
-            .join(format!("{}.rs", module_name.snake));
-        vfs.add_file(file_path, content);
-
-        Ok(())
-    }
-
-    /// Generate types/mod.rs
-    fn generate_types_mod(
-        &self,
-        types_by_tag: &BTreeMap<String, Vec<&TypeDecl>>,
-        vfs: &mut VirtualFS,
-    ) -> Result<()> {
-        let mut mod_content = String::from("//! API types organized by tag\n\n");
-
-        for tag in types_by_tag.keys() {
-            let module_name = CanonicalName::from_string(tag);
-            let feature_name = module_name.snake.clone();
-
-            if tag == "common" {
-                mod_content.push_str(&format!("pub mod {};\n", module_name.snake));
-            } else {
-                mod_content.push_str(&format!(
-                    "#[cfg(feature = \"{}\")]\npub mod {};\n",
-                    feature_name, module_name.snake
-                ));
+            // Add feature flag if type has tags
+            if !features.is_empty() {
+                let feature_list: Vec<String> = features
+                    .iter()
+                    .map(|f| format!("feature = \"{}\"", f))
+                    .collect();
+                if feature_list.len() > 1 {
+                    content.push_str(&format!("#[cfg(any({}))]\n", feature_list.join(", ")));
+                } else {
+                    content.push_str(&format!("#[cfg({})]\n", feature_list[0]));
+                }
             }
+
+            let rendered = self.render_type(type_decl, ir)?;
+            content.push_str(&rendered);
+            content.push_str("\n\n");
         }
 
-        vfs.add_file("src/types/mod.rs", mod_content);
+        vfs.add_file("src/types.rs", content);
         Ok(())
+    }
+
+    /// Escape Rust keywords with r# prefix
+    fn escape_rust_keyword(name: &str) -> String {
+        match name {
+            "as" | "break" | "const" | "continue" | "crate" | "else" | "enum" | "extern"
+            | "false" | "fn" | "for" | "if" | "impl" | "in" | "let" | "loop" | "match" | "mod"
+            | "move" | "mut" | "pub" | "ref" | "return" | "self" | "Self" | "static" | "struct"
+            | "super" | "trait" | "true" | "type" | "unsafe" | "use" | "where" | "while"
+            | "async" | "await" | "dyn" | "abstract" | "become" | "box" | "do" | "final"
+            | "macro" | "override" | "priv" | "typeof" | "unsized" | "virtual" | "yield"
+            | "try" => format!("r#{}", name),
+            _ => name.to_string(),
+        }
     }
 
     /// Render a type declaration
@@ -125,9 +93,10 @@ impl RustAxumGenerator {
                 let fields_str: Vec<String> = fields
                     .iter()
                     .map(|f| {
+                        let field_name = Self::escape_rust_keyword(&f.name.snake);
                         format!(
                             "    pub {}: {},",
-                            f.name.snake,
+                            field_name,
                             self.render_type_ref(&f.ty, ir)
                         )
                     })
@@ -142,7 +111,10 @@ impl RustAxumGenerator {
             TypeKind::Enum { values, .. } => {
                 let variants: Vec<String> = values
                     .iter()
-                    .map(|v| format!("    {},", v.name.pascal))
+                    .map(|v| {
+                        let variant_name = Self::escape_rust_keyword(&v.name.pascal);
+                        format!("    {},", variant_name)
+                    })
                     .collect();
 
                 Ok(format!(

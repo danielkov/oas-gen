@@ -1,15 +1,12 @@
 //! {{ trait_name }} service module
 
 use axum::{
-    extract::{Path, Query, State},
-    http::{Request, StatusCode},
+    extract::{FromRequestParts, Path, Query},
+    http::StatusCode,
     response::{IntoResponse, Response},
     routing::{delete, get, patch, post, put},
     Extension, Json, Router,
 };
-use serde::{Deserialize, Serialize};
-
-use crate::types;
 
 /// Request context containing state and request metadata
 pub struct RequestContext<S> {
@@ -26,81 +23,90 @@ impl<S> RequestContext<S> {
     }
 }
 
-impl<S: Clone> RequestContext<S> {
-    pub(crate) fn from_parts(state: S, parts: axum::http::request::Parts) -> Self {
-        RequestContext {
-            state,
-            method: parts.method,
-            uri: parts.uri,
-            headers: parts.headers,
-            extensions: parts.extensions,
-        }
+impl<S> FromRequestParts<S> for RequestContext<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        Ok(RequestContext {
+            state: state.clone(),
+            method: parts.method.clone(),
+            uri: parts.uri.clone(),
+            headers: parts.headers.clone(),
+            extensions: parts.extensions.clone(),
+        })
     }
 }
 
-{% for scheme in auth_schemes -%}
-{% if scheme.kind is object and scheme.kind.Http is defined and scheme.kind.Http.scheme == "bearer" -%}
+{% if has_bearer_auth -%}
 /// Bearer authentication token
 #[derive(Clone, Debug)]
 pub struct AuthBearer(pub String);
 
 {% endif -%}
-{% if scheme.kind is object and scheme.kind.ApiKey is defined -%}
+{% if has_api_key_auth -%}
 /// API Key authentication
 #[derive(Clone, Debug)]
 pub struct AuthApiKey(pub String);
 
 {% endif -%}
-{% endfor -%}
 
 // Per-operation result and error types
-{% for op in operations -%}
-{% set op_name = op.name.pascal %}
-{% set op_snake = op.name.snake %}
+{% for op_wrap in operations -%}
+{% set op = op_wrap.operation -%}
 
-// {{ op_name }} types
-{% if op.success and op.success.ty -%}
-{% set success_type = "types::" ~ op.success.ty.target.0 %}
-pub type {{ op_name }}Result = Result<{{ success_type }}, {{ op_name }}Error>;
+// {{ op.name.pascal }} types
+{% if let Some(success) = op.success -%}
+{% if let Some(ty) = success.ty -%}
+pub type {{ op.name.pascal }}Result = Result<crate::types::{{ ty.target }}, {{ op.name.pascal }}Error>;
 {% else -%}
-pub type {{ op_name }}Result = Result<(), {{ op_name }}Error>;
-{% endif %}
+pub type {{ op.name.pascal }}Result = Result<(), {{ op.name.pascal }}Error>;
+{% endif -%}
+{% else -%}
+pub type {{ op.name.pascal }}Result = Result<(), {{ op.name.pascal }}Error>;
+{% endif -%}
 
 #[derive(Debug)]
-pub enum {{ op_name }}Error {
-    {% if op.errors is object -%}
-    {% if op.errors.Inline is defined and op.errors.Inline.variants -%}
-    {% for variant in op.errors.Inline.variants -%}
-    /// {{ variant.status | json_encode }}
-    {{ variant.name.pascal }}{% if variant.ty %}(types::{{ variant.ty.target.0 }}){% endif %},
+pub enum {{ op.name.pascal }}Error {
+    {% match op.errors -%}
+    {% when ir::gen_ir::ErrorUse::Inline with (error_decl) -%}
+    {% for variant in error_decl.variants -%}
+    /// Status: {{ variant.status|fmt("{:?}") }}
+    {{ variant.name.pascal }}{% if let Some(ty) = variant.ty %}(crate::types::{{ ty.target }}){% endif %},
     {% endfor -%}
-    {% endif -%}
-    {% endif -%}
+    {% when _ -%}
+    {% endmatch -%}
     InternalError(String),
 }
 
-impl IntoResponse for {{ op_name }}Error {
+impl IntoResponse for {{ op.name.pascal }}Error {
     fn into_response(self) -> Response {
         match self {
-            {% if op.errors is object -%}
-            {% if op.errors.Inline is defined and op.errors.Inline.variants -%}
-            {% for variant in op.errors.Inline.variants -%}
-            {{ op_name }}Error::{{ variant.name.pascal }}{% if variant.ty %}(err){% endif %} => {
-                {% if variant.status is object and variant.status.Code is defined -%}
-                let status = StatusCode::from_u16({{ variant.status.Code }}).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-                {% else -%}
+            {% match op.errors -%}
+            {% when ir::gen_ir::ErrorUse::Inline with (error_decl) -%}
+            {% for variant in error_decl.variants -%}
+            {{ op.name.pascal }}Error::{{ variant.name.pascal }}{% if variant.ty.is_some() %}(err){% endif %} => {
+                {% match variant.status -%}
+                {% when ir::gen_ir::StatusSpec::Code with (code) -%}
+                let status = StatusCode::from_u16({{ code }}).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+                {% when _ -%}
                 let status = StatusCode::BAD_REQUEST;
-                {% endif -%}
-                {% if variant.ty -%}
+                {% endmatch -%}
+                {% if variant.ty.is_some() -%}
                 (status, Json(err)).into_response()
                 {% else -%}
                 status.into_response()
                 {% endif -%}
             }
             {% endfor -%}
-            {% endif -%}
-            {% endif -%}
-            {{ op_name }}Error::InternalError(msg) => {
+            {% when _ -%}
+            {% endmatch -%}
+            {{ op.name.pascal }}Error::InternalError(msg) => {
                 (StatusCode::INTERNAL_SERVER_ERROR, msg).into_response()
             }
         }
@@ -110,36 +116,171 @@ impl IntoResponse for {{ op_name }}Error {
 {% endfor %}
 
 /// {{ trait_name }} service trait
-pub trait {{ trait_name }}<S>: Send + Sync {
-    {% for op in operations -%}
-    {% set op_name = op.name.pascal %}
-    {% set op_snake = op.name.snake %}
-    /// {{ op.http.method | json_encode }} {{ op.http.path_template }}
-    async fn {{ op_snake }}(
+///
+/// # Example
+///
+/// ```rust
+/// use super::*;
+///
+/// // Define your application state
+/// #[derive(Clone)]
+/// struct AppState {
+///     // Add your state fields here (e.g., database connection, config, etc.)
+/// }
+///
+/// // Define your service implementation
+/// #[derive(Clone)]
+/// struct {{ trait_name }}Service {
+///     // Add any dependencies your service needs
+/// }
+///
+/// impl {{ trait_name }}Service {
+///     fn new() -> Self {
+///         Self {}
+///     }
+/// }
+///
+/// // Implement the trait
+/// impl {{ trait_name }}<AppState> for {{ trait_name }}Service {
+{% for op_wrap in operations -%}
+{% set op = op_wrap.operation -%}
+///     async fn {{ op.name.snake }}(
+///         &self,
+///         ctx: RequestContext<AppState>,
+{% for param in op.http.path_params -%}
+///         {{ param.name.snake }}: String,
+{% endfor -%}
+{% if op.http.query.len() > 0 -%}
+///         query: {{ op.name.pascal }}Query,
+{% endif -%}
+{% if let Some(body) = op.http.body -%}
+{% if let Some(variant) = body.variants.first() -%}
+///         body: crate::types::{{ variant.ty.target }},
+{% endif -%}
+{% endif -%}
+///     ) -> {{ op.name.pascal }}Result {
+///         // Implement your business logic here
+{% if let Some(success) = op.success -%}
+{% if let Some(ty) = success.ty -%}
+///         // Return Ok(your_{{ ty.target|lower }}) or Err(error)
+///         Err({{ op.name.pascal }}Error::InternalError("Not implemented".to_string()))
+{% else -%}
+///         Ok(())
+{% endif -%}
+{% else -%}
+///         Ok(())
+{% endif -%}
+///     }
+///
+{% endfor -%}
+/// }
+///
+/// // Usage: Create router and merge into your app
+/// # async fn example() {
+/// let state = AppState {};
+/// let service = {{ trait_name }}Service::new();
+///
+/// let app = axum::Router::new()
+///     .with_state(state)
+///     .merge(service.router());
+/// # }
+/// ```
+pub trait {{ trait_name }}<S>: Send + Sync + Clone + Sized + 'static
+where
+    S: Clone + Send + Sync + 'static,
+{
+    {% for op_wrap in operations -%}
+    {% set op = op_wrap.operation -%}
+    /// {{ op.http.method|fmt("{:?}") }} {{ op.http.path_template }}
+    fn {{ op.name.snake }}(
         &self,
         ctx: RequestContext<S>,
         {% for param in op.http.path_params -%}
         {{ param.name.snake }}: String,
         {% endfor -%}
-        {% if op.http.query | length > 0 -%}
-        query: {{ op_name }}Query,
+        {% if op.http.query .len() > 0 -%}
+        query: {{ op.name.pascal }}Query,
         {% endif -%}
-        {% if op.http.body -%}
-        {% if op.http.body.variants | length > 0 -%}
-        body: types::{{ op.http.body.variants[0].ty.target.0 }},
+        {% if let Some(body) = op.http.body -%}
+        {% if let Some(variant) = body.variants.first() -%}
+        body: crate::types::{{ variant.ty.target }},
         {% endif -%}
         {% endif -%}
-    ) -> {{ op_name }}Result;
+    ) -> impl std::future::Future<Output = {{ op.name.pascal }}Result> + Send;
 
-    {% endfor %}
+    {% endfor -%}
+
+    /// Create a router for this service
+    fn router(self) -> Router<S> {
+        {% for op_wrap in operations -%}
+        {% set op = op_wrap.operation -%}
+        let {{ op.name.snake }}_handler = |ctx: RequestContext<S>, Extension(service): Extension<Self>{% if op.http.path_params .len() > 0 %}, Path(path_params): Path<({% for p in op.http.path_params -%}
+            String{% if !loop.last %}, {% endif -%}
+        {% endfor %})>{% endif -%}
+        {% if op.http.query .len() > 0 %}, Query(query): Query<{{ op.name.pascal }}Query>{% endif -%}
+        {% if let Some(body) = op.http.body -%}
+        {% if let Some(variant) = body.variants.first() %}, Json(body): Json<crate::types::{{ variant.ty.target }}>{% endif -%}
+        {% endif -%}
+        | async move {
+            {% if op.http.path_params .len() == 1 -%}
+            let {{ op.http.path_params[0].name.snake }} = path_params;
+            {% else if op.http.path_params .len() > 1 -%}
+            let ({% for p in op.http.path_params -%}
+                {{ p.name.snake }}{% if !loop.last %}, {% endif -%}
+            {% endfor %}) = path_params;
+            {% endif -%}
+
+            match service.{{ op.name.snake }}(
+                ctx,
+                {% for param in op.http.path_params -%}
+                {{ param.name.snake }},
+                {% endfor -%}
+                {% if op.http.query .len() > 0 -%}
+                query,
+                {% endif -%}
+                {% if let Some(body_type) = op.http.body -%}
+                {% if body_type.variants .len() > 0 -%}
+                body,
+                {% endif -%}
+                {% endif -%}
+            ).await {
+                Ok(result) => {
+                    {% if let Some(success) = op.success -%}
+                    {% match success.status -%}
+                    {% when ir::gen_ir::StatusSpec::Code with (code) -%}
+                    let status = StatusCode::from_u16({{ code }}).unwrap_or(StatusCode::OK);
+                    {% when _ -%}
+                    let status = StatusCode::OK;
+                    {% endmatch -%}
+                    {% if success.ty.is_some() -%}
+                    (status, Json(result)).into_response()
+                    {% else -%}
+                    status.into_response()
+                    {% endif -%}
+                    {% else -%}
+                    let status = StatusCode::OK;
+                    status.into_response()
+                    {% endif -%}
+                }
+                Err(e) => e.into_response(),
+            }
+        };
+
+        {% endfor -%}
+        Router::new()
+            {% for op_wrap in operations -%}
+            .route("{{ op_wrap.operation.http.path_template }}", {{ op_wrap.method_fn }}({{ op_wrap.operation.name.snake }}_handler))
+            {% endfor -%}
+            .layer(Extension(self))
+    }
 }
 
 // Query parameter structs
-{% for op in operations -%}
-{% if op.http.query | length > 0 -%}
-{% set op_name = op.name.pascal %}
-#[derive(Debug, Deserialize)]
-pub struct {{ op_name }}Query {
+{% for op_wrap in operations -%}
+{% set op = op_wrap.operation -%}
+{% if op.http.query.len() > 0 -%}
+#[derive(Debug, serde::Deserialize)]
+pub struct {{ op.name.pascal }}Query {
     {% for param in op.http.query -%}
     {% if param.required -%}
     pub {{ param.name.snake }}: String,
@@ -151,96 +292,3 @@ pub struct {{ op_name }}Query {
 
 {% endif -%}
 {% endfor %}
-
-// Handlers
-{% for op in operations -%}
-{% set op_name = op.name.pascal %}
-{% set op_snake = op.name.snake %}
-
-async fn {{ op_snake }}_handler<S, H>(
-    State(state): State<S>,
-    Extension(service): Extension<H>,
-    {% if op.http.path_params | length > 0 -%}
-    Path(path_params): Path<({% for p in op.http.path_params %}String{% if not loop.last %}, {% endif %}{% endfor %})>,
-    {% endif -%}
-    {% if op.http.query | length > 0 -%}
-    Query(query): Query<{{ op_name }}Query>,
-    {% endif -%}
-    {% if op.http.body and op.http.body.variants | length > 0 -%}
-    Json(body): Json<types::{{ op.http.body.variants[0].ty.target.0 }}>,
-    {% endif -%}
-    req: Request<axum::body::Body>,
-) -> Response
-where
-    S: Clone + Send + Sync + 'static,
-    H: {{ trait_name }}<S> + Clone + Send + Sync + 'static,
-{
-    let (parts, _body) = req.into_parts();
-    let ctx = RequestContext::from_parts(state, parts);
-
-    {% if op.http.path_params | length == 1 -%}
-    let {{ op.http.path_params[0].name.snake }} = path_params;
-    {% elif op.http.path_params | length > 1 -%}
-    let ({% for p in op.http.path_params %}{{ p.name.snake }}{% if not loop.last %}, {% endif %}{% endfor %}) = path_params;
-    {% endif -%}
-
-    match service.{{ op_snake }}(
-        ctx,
-        {% for param in op.http.path_params -%}
-        {{ param.name.snake }},
-        {% endfor -%}
-        {% if op.http.query | length > 0 -%}
-        query,
-        {% endif -%}
-        {% if op.http.body and op.http.body.variants | length > 0 -%}
-        body,
-        {% endif -%}
-    ).await {
-        Ok(result) => {
-            {% if op.success and op.success.status is object and op.success.status.Code is defined -%}
-            let status = StatusCode::from_u16({{ op.success.status.Code }}).unwrap_or(StatusCode::OK);
-            {% else -%}
-            let status = StatusCode::OK;
-            {% endif -%}
-            {% if op.success and op.success.ty -%}
-            (status, Json(result)).into_response()
-            {% else -%}
-            status.into_response()
-            {% endif -%}
-        }
-        Err(e) => e.into_response(),
-    }
-}
-
-{% endfor %}
-
-/// Create a router for this service
-pub fn router<S, H>(service: H) -> Router<S>
-where
-    S: Clone + Send + Sync + 'static,
-    H: {{ trait_name }}<S> + Clone + Send + Sync + 'static,
-{
-    Router::new()
-        {% for op in operations -%}
-        {% set method_fn = op.http.method | lower | replace("Get", "get") | replace("Post", "post") | replace("Put", "put") | replace("Delete", "delete") | replace("Patch", "patch") | replace("Head", "head") | replace("Options", "options") -%}
-        .route("{{ op.http.path_template }}", {{ method_fn }}({{ op.name.snake }}_handler::<S, H>))
-        {% endfor -%}
-        .layer(Extension(service))
-}
-
-/// Extension trait for ergonomic router creation
-pub trait {{ trait_name }}RouterExt<S>: {{ trait_name }}<S> + Clone + Send + Sync + 'static
-where
-    S: Clone + Send + Sync + 'static,
-{
-    fn router(self) -> Router<S> {
-        router::<S, Self>(self)
-    }
-}
-
-impl<S, T> {{ trait_name }}RouterExt<S> for T
-where
-    S: Clone + Send + Sync + 'static,
-    T: {{ trait_name }}<S> + Clone + Send + Sync + 'static,
-{
-}

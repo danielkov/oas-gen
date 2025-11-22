@@ -10,6 +10,12 @@ pub type Map<K, V> = BTreeMap<K, V>;
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 pub struct StableId(pub String);
 
+impl std::fmt::Display for StableId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 /// Precomputed, language-agnostic names to avoid case-munging in templates.
 /// Generators pick the right field for their target.
 #[derive(Debug, Clone, Serialize)]
