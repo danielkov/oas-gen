@@ -7,4 +7,5 @@ members = [
   "ir",
   "parser2",
   "templates/typescript",
+  "templates/rust-axum",
 ]

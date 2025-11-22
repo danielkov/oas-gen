@@ -1,5 +1,5 @@
 use serde_json::Value as JsonValue;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 
 pub mod gen_ir;
@@ -158,6 +158,137 @@ fn hoist_inline_schema(
     hoist_inline_schema_with_parent(ctx, type_name, schema, None)
 }
 
+/// Associate tags with types based on their usage in operations
+fn associate_tags_with_types(types: &mut BTreeMap<StableId, TypeDecl>, services: &[Service]) {
+    for service in services {
+        // Service name corresponds to the tag
+        let tag = service.name.canonical.clone();
+
+        for operation in &service.operations {
+            // Collect all type references from this operation
+            let mut type_ids = HashSet::new();
+
+            // From path parameters
+            for param in &operation.http.path_params {
+                collect_type_ids_from_type_ref(&param.ty, &mut type_ids);
+            }
+
+            // From query parameters
+            for param in &operation.http.query {
+                collect_type_ids_from_type_ref(&param.ty, &mut type_ids);
+            }
+
+            // From header parameters
+            for param in &operation.http.headers {
+                collect_type_ids_from_type_ref(&param.ty, &mut type_ids);
+            }
+
+            // From cookie parameters
+            for param in &operation.http.cookies {
+                collect_type_ids_from_type_ref(&param.ty, &mut type_ids);
+            }
+
+            // From request body
+            if let Some(body) = &operation.http.body {
+                for variant in &body.variants {
+                    collect_type_ids_from_type_ref(&variant.ty, &mut type_ids);
+                }
+            }
+
+            // From success response
+            if let Some(success) = &operation.success {
+                if let Some(ty) = &success.ty {
+                    collect_type_ids_from_type_ref(ty, &mut type_ids);
+                }
+            }
+
+            // From alt success responses
+            for alt_success in &operation.alt_success {
+                if let Some(ty) = &alt_success.ty {
+                    collect_type_ids_from_type_ref(ty, &mut type_ids);
+                }
+            }
+
+            // Add the tag to all collected types
+            for type_id in type_ids {
+                add_tag_recursively(types, &type_id, &tag);
+            }
+        }
+    }
+}
+
+/// Recursively add a tag to a type and all its nested types
+fn add_tag_recursively(types: &mut BTreeMap<StableId, TypeDecl>, type_id: &StableId, tag: &str) {
+    // First, check if the type exists and needs the tag
+    let needs_tag = types
+        .get(type_id)
+        .map(|t| !t.tags.contains(tag))
+        .unwrap_or(false);
+
+    if !needs_tag {
+        return; // Already has this tag, no need to recurse
+    }
+
+    // Collect nested type IDs before borrowing mutably
+    let nested_ids: Vec<StableId> = if let Some(type_decl) = types.get(type_id) {
+        let mut ids = Vec::new();
+        match &type_decl.kind {
+            TypeKind::Struct { fields, .. } => {
+                for field in fields {
+                    let mut field_ids = HashSet::new();
+                    collect_type_ids_from_type_ref(&field.ty, &mut field_ids);
+                    ids.extend(field_ids);
+                }
+            }
+            TypeKind::Union { variants, .. } => {
+                for variant in variants {
+                    let mut variant_ids = HashSet::new();
+                    collect_type_ids_from_type_ref(&variant.ty, &mut variant_ids);
+                    ids.extend(variant_ids);
+                }
+            }
+            TypeKind::Alias { aliased } => {
+                if let AliasTarget::Reference(type_ref) = aliased {
+                    let mut alias_ids = HashSet::new();
+                    collect_type_ids_from_type_ref(type_ref, &mut alias_ids);
+                    ids.extend(alias_ids);
+                }
+            }
+            _ => {}
+        }
+        ids
+    } else {
+        Vec::new()
+    };
+
+    // Now add the tag (safe to borrow mutably)
+    if let Some(type_decl) = types.get_mut(type_id) {
+        type_decl.tags.insert(tag.to_string());
+    }
+
+    // Recursively add tag to nested types
+    for nested_id in nested_ids {
+        add_tag_recursively(types, &nested_id, tag);
+    }
+}
+
+/// Collect all StableIds from a TypeRef (including nested ones)
+fn collect_type_ids_from_type_ref(type_ref: &TypeRef, ids: &mut HashSet<StableId>) {
+    // Don't collect primitive types
+    if type_ref.target.0.starts_with("Primitive_") {
+        return;
+    }
+
+    ids.insert(type_ref.target.clone());
+
+    // Also collect from modifiers (like Map value types)
+    for modifier in &type_ref.modifiers {
+        if let TypeMod::Map(value_type) = modifier {
+            collect_type_ids_from_type_ref(value_type, ids);
+        }
+    }
+}
+
 // Build an AST from an OpenAPI 3.0 document (oas3::Spec)
 impl From<oas3::spec::Spec> for GenIr {
     fn from(spec: oas3::spec::Spec) -> Self {
@@ -188,6 +319,9 @@ impl From<oas3::spec::Spec> for GenIr {
             &spec.security,
             spec.components.as_ref(),
         );
+
+        // Associate tags with types based on operation usage
+        associate_tags_with_types(&mut ctx.types, &services);
 
         GenIr {
             api,
@@ -240,6 +374,7 @@ fn convert_schema_to_type(
         docs,
         kind,
         origin: None,
+        tags: BTreeSet::new(),
     })
 }
 

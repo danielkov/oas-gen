@@ -743,7 +743,7 @@ mod tests {
     use ir::gen_ir::{
         Additional, CanonicalName, Docs, Field, StableId, TypeDecl, TypeKind, TypeRef,
     };
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
 
     #[test]
     fn test_interface_with_field_descriptions() {
@@ -794,6 +794,7 @@ mod tests {
                 discriminator: None,
             },
             origin: None,
+            tags: BTreeSet::new(),
         };
 
         let ir = GenIr {
@@ -876,6 +877,7 @@ mod tests {
                 discriminator: None,
             },
             origin: None,
+            tags: BTreeSet::new(),
         };
 
         let ir = GenIr {
@@ -990,6 +992,7 @@ mod tests {
                 discriminator: None,
             },
             origin: None,
+            tags: BTreeSet::new(),
         };
 
         let ir = GenIr {

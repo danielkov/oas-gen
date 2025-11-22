@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 pub type Map<K, V> = BTreeMap<K, V>;
 
 /// A globally stable identifier for types/operations/services usable as filename, symbol, etc.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 pub struct StableId(pub String);
 
 /// Precomputed, language-agnostic names to avoid case-munging in templates.
@@ -113,6 +113,9 @@ pub struct TypeDecl {
     pub kind: TypeKind,
     /// Optional source hints (original schema pointer) for traceability.
     pub origin: Option<String>,
+    /// Tags associated with this type (from OpenAPI operation tags).
+    /// Used for feature-flag based code organization.
+    pub tags: BTreeSet<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

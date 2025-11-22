@@ -33,6 +33,9 @@ impl GeneratorRegistry {
         #[cfg(feature = "typescript")]
         registry.register(Box::new(typescript::TypeScriptGenerator::new()));
 
+        #[cfg(feature = "rust-axum")]
+        registry.register(Box::new(rust_axum::RustAxumGenerator::new()));
+
         registry
     }
 

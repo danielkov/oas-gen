@@ -138,6 +138,7 @@ fn create_test_ir() -> GenIr {
             discriminator: None,
         },
         origin: None,
+        tags: BTreeSet::new(),
     };
 
     types.insert(user_type.id.clone(), user_type);
@@ -190,6 +191,7 @@ fn create_test_ir() -> GenIr {
             ],
         },
         origin: None,
+        tags: BTreeSet::new(),
     };
 
     types.insert(status_type.id.clone(), status_type);

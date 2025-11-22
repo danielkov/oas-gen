@@ -7,9 +7,10 @@ edition = "2024"
 codegen = { path = "../codegen" }
 libloading = { version = "0.8", optional = true }
 typescript = { path = "../templates/typescript", optional = true }
+rust-axum = { path = "../templates/rust-axum", optional = true }
 
 [features]
-default = ["typescript"]
+default = ["typescript", "rust-axum"]
 dynamic-plugins = ["libloading"]
 
 [dev-dependencies]
