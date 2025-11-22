@@ -48,11 +48,20 @@ impl TypeScriptGenerator {
                     docs: &type_decl.docs,
                     fields: fields
                         .iter()
-                        .map(|f| FieldData {
-                            name: &f.name.camel,
-                            optional: f.ty.optional,
-                            type_str: self.render_type_ref(&f.ty, ir),
-                            docs: &f.docs,
+                        .map(|f| {
+                            // If there's a const value, use it as a literal type
+                            let type_str = if let Some(const_val) = &f.const_value {
+                                self.render_literal(const_val)
+                            } else {
+                                self.render_type_ref(&f.ty, ir)
+                            };
+
+                            FieldData {
+                                name: &f.name.camel,
+                                optional: f.ty.optional,
+                                type_str,
+                                docs: &f.docs,
+                            }
                         })
                         .collect(),
                 };
@@ -771,6 +780,7 @@ mod tests {
             },
             default: None,
             deprecated: false,
+            const_value: None,
             wire_name: "testField".to_string(),
         };
 
@@ -852,6 +862,7 @@ mod tests {
             },
             default: None,
             deprecated: false,
+            const_value: None,
             wire_name: "simpleField".to_string(),
         };
 
@@ -897,6 +908,129 @@ mod tests {
         assert!(
             result.contains("simpleField: string;"),
             "Should contain field declaration"
+        );
+    }
+
+    #[test]
+    fn test_interface_with_const_fields() {
+        let generator = TypeScriptGenerator::new();
+
+        // Create a type with const fields
+        let type_name = CanonicalName::from_string("Pet");
+
+        let fields = vec![
+            Field {
+                name: CanonicalName::from_string("type"),
+                docs: Docs {
+                    summary: Some("Type discriminator".to_string()),
+                    description: Some("Always 'pet' for this type".to_string()),
+                    deprecated: false,
+                    since: None,
+                    examples: Vec::new(),
+                    external_urls: Vec::new(),
+                },
+                ty: TypeRef {
+                    target: StableId("Primitive_String".to_string()),
+                    optional: false,
+                    nullable: false,
+                    by_ref: false,
+                    modifiers: Vec::new(),
+                },
+                default: None,
+                deprecated: false,
+                const_value: Some(ir::gen_ir::Literal::String("pet".to_string())),
+                wire_name: "type".to_string(),
+            },
+            Field {
+                name: CanonicalName::from_string("name"),
+                docs: Docs {
+                    summary: Some("Pet name".to_string()),
+                    description: None,
+                    deprecated: false,
+                    since: None,
+                    examples: Vec::new(),
+                    external_urls: Vec::new(),
+                },
+                ty: TypeRef {
+                    target: StableId("Primitive_String".to_string()),
+                    optional: false,
+                    nullable: false,
+                    by_ref: false,
+                    modifiers: Vec::new(),
+                },
+                default: None,
+                deprecated: false,
+                const_value: None,
+                wire_name: "name".to_string(),
+            },
+            Field {
+                name: CanonicalName::from_string("active"),
+                docs: Docs::default(),
+                ty: TypeRef {
+                    target: StableId("Primitive_Bool".to_string()),
+                    optional: false,
+                    nullable: false,
+                    by_ref: false,
+                    modifiers: Vec::new(),
+                },
+                default: None,
+                deprecated: false,
+                const_value: Some(ir::gen_ir::Literal::Bool(true)),
+                wire_name: "active".to_string(),
+            },
+        ];
+
+        let type_decl = TypeDecl {
+            id: StableId("Pet".to_string()),
+            name: type_name,
+            docs: Docs::default(),
+            kind: TypeKind::Struct {
+                fields,
+                additional: Additional::Forbidden,
+                discriminator: None,
+            },
+            origin: None,
+        };
+
+        let ir = GenIr {
+            api: ir::gen_ir::ApiMeta {
+                title: "Test API".to_string(),
+                version: "1.0.0".to_string(),
+                package_name: CanonicalName::from_string("test-api"),
+                docs: Docs::default(),
+            },
+            types: BTreeMap::new(),
+            services: Vec::new(),
+            auth_schemes: Vec::new(),
+            errors: Vec::new(),
+            server_sets: Vec::new(),
+        };
+
+        let result = generator.render_type(&type_decl, &ir).unwrap();
+
+        // Verify the interface structure
+        assert!(
+            result.contains("export interface Pet"),
+            "Should contain interface declaration"
+        );
+
+        // Verify const fields are rendered as literal types
+        assert!(
+            result.contains("type: \"pet\"") || result.contains("type: 'pet'"),
+            "Should render const string field as literal type, got: {}",
+            result
+        );
+        assert!(
+            result.contains("active: true"),
+            "Should render const boolean field as literal type, got: {}",
+            result
+        );
+
+        // Verify regular field is still rendered normally
+        assert!(
+            result.contains("name: string"),
+            "Should render regular field with normal type, got: {}",
+            result
         );
     }
 }

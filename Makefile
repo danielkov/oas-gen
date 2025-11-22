@@ -39,6 +39,8 @@ run-stripe:
 run-openrouter:
 	cargo run --bin oas-gen -- examples/openrouter.yml -t typescript -v -o test-generated/openrouter-typescript
 
+run-all: run run-unkey run-stripe run-openrouter
+
 # Clean build artifacts
 clean:
 	cargo clean

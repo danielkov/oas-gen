@@ -503,6 +503,13 @@ fn convert_all_of_to_type(
                     let ty = convert_object_schema_to_type_ref(ctx, &prop_schema);
                     let is_nullable = prop_schema.is_nullable().unwrap_or(false);
 
+                    // Check if this field has a const value
+                    let const_value = if let Some(const_val) = &prop_schema.const_value {
+                        Some(convert_json_value_to_literal(const_val))
+                    } else {
+                        None
+                    };
+
                     let new_field = Field {
                         name: CanonicalName::from_string(prop_name),
                         docs: Docs {
@@ -522,6 +529,7 @@ fn convert_all_of_to_type(
                         },
                         default: None,
                         deprecated: prop_schema.deprecated.unwrap_or(false),
+                        const_value,
                         wire_name: prop_name.clone(),
                     };
 
@@ -647,6 +655,13 @@ fn convert_properties(
 
             let prop_schema = prop_schema_ref.resolve(ctx.spec).ok()?;
 
+            // Check if this field has a const value
+            let const_value = if let Some(const_val) = &prop_schema.const_value {
+                Some(convert_json_value_to_literal(const_val))
+            } else {
+                None
+            };
+
             Some(Field {
                 name: CanonicalName::from_string(prop_name),
                 docs: Docs {
@@ -666,10 +681,40 @@ fn convert_properties(
                 },
                 default: None, // TODO: parse default values
                 deprecated: prop_schema.deprecated.unwrap_or(false),
+                const_value,
                 wire_name: prop_name.clone(),
             })
         })
         .collect()
+}
+
+/// Convert a JSON value to a Literal
+fn convert_json_value_to_literal(value: &JsonValue) -> Literal {
+    match value {
+        JsonValue::String(s) => Literal::String(s.clone()),
+        JsonValue::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                Literal::I64(i)
+            } else if let Some(f) = n.as_f64() {
+                Literal::F64(f)
+            } else {
+                Literal::String(n.to_string())
+            }
+        }
+        JsonValue::Bool(b) => Literal::Bool(*b),
+        JsonValue::Null => Literal::Null,
+        JsonValue::Array(arr) => {
+            let items = arr.iter().map(convert_json_value_to_literal).collect();
+            Literal::Array(items)
+        }
+        JsonValue::Object(obj) => {
+            let items = obj
+                .iter()
+                .map(|(k, v)| (k.clone(), convert_json_value_to_literal(v)))
+                .collect();
+            Literal::Object(items)
+        }
+    }
 }
 
 /// Convert enum values
@@ -3323,5 +3368,124 @@ type Extended = {
             expected.trim(),
             "Generated pseudo-code doesn't match expected output"
         );
+    }
+
+    #[test]
+    fn test_const_field_detection() {
+        // Test that const fields are properly detected and converted to const_value
+        let json = r##"{
+            "openapi": "3.0.0",
+            "info": {
+                "title": "Test API",
+                "version": "1.0.0"
+            },
+            "paths": {},
+            "components": {
+                "schemas": {
+                    "Pet": {
+                        "type": "object",
+                        "required": ["type", "name"],
+                        "properties": {
+                            "type": {
+                                "type": "string",
+                                "const": "pet",
+                                "description": "Always 'pet'"
+                            },
+                            "name": {
+                                "type": "string"
+                            },
+                            "active": {
+                                "type": "boolean",
+                                "const": true
+                            },
+                            "version": {
+                                "type": "integer",
+                                "const": 1
+                            }
+                        }
+                    }
+                }
+            }
+        }"##;
+
+        let doc = parse(json).unwrap();
+        let gen_ir = GenIr::from(doc);
+
+        // Find the Pet type
+        let pet_id = StableId::new("Pet");
+        let pet_type = gen_ir.types.get(&pet_id).expect("Pet type should exist");
+
+        // Verify it's a struct
+        if let TypeKind::Struct { fields, .. } = &pet_type.kind {
+            // Find the 'type' field
+            let type_field = fields
+                .iter()
+                .find(|f| f.name.canonical == "type")
+                .expect("'type' field should exist");
+
+            // Verify it has a const value
+            assert!(
+                type_field.const_value.is_some(),
+                "'type' field should have a const_value"
+            );
+
+            // Verify the const value is correct
+            if let Some(crate::gen_ir::Literal::String(val)) = &type_field.const_value {
+                assert_eq!(val, "pet", "const value should be 'pet'");
+            } else {
+                panic!("const_value should be a String literal");
+            }
+
+            // Find the 'active' field
+            let active_field = fields
+                .iter()
+                .find(|f| f.name.canonical == "active")
+                .expect("'active' field should exist");
+
+            // Verify it has a const value
+            assert!(
+                active_field.const_value.is_some(),
+                "'active' field should have a const_value"
+            );
+
+            // Verify the const value is correct
+            if let Some(crate::gen_ir::Literal::Bool(val)) = &active_field.const_value {
+                assert_eq!(*val, true, "const value should be true");
+            } else {
+                panic!("const_value should be a Bool literal");
+            }
+
+            // Find the 'version' field
+            let version_field = fields
+                .iter()
+                .find(|f| f.name.canonical == "version")
+                .expect("'version' field should exist");
+
+            // Verify it has a const value
+            assert!(
+                version_field.const_value.is_some(),
+                "'version' field should have a const_value"
+            );
+
+            // Verify the const value is correct
+            if let Some(crate::gen_ir::Literal::I64(val)) = &version_field.const_value {
+                assert_eq!(*val, 1, "const value should be 1");
+            } else {
+                panic!("const_value should be an I64 literal");
+            }
+
+            // Verify 'name' field does NOT have a const value
+            let name_field = fields
+                .iter()
+                .find(|f| f.name.canonical == "name")
+                .expect("'name' field should exist");
+
+            assert!(
+                name_field.const_value.is_none(),
+                "'name' field should NOT have a const_value"
+            );
+        } else {
+            panic!("Pet type should be a Struct");
+        }
     }
 }

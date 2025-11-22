@@ -78,6 +78,7 @@ fn create_test_ir() -> GenIr {
                     },
                     default: None,
                     deprecated: false,
+                    const_value: None,
                     wire_name: "id".to_string(),
                 },
                 Field {
@@ -103,6 +104,7 @@ fn create_test_ir() -> GenIr {
                     },
                     default: None,
                     deprecated: false,
+                    const_value: None,
                     wire_name: "name".to_string(),
                 },
                 Field {
@@ -128,6 +130,7 @@ fn create_test_ir() -> GenIr {
                     },
                     default: None,
                     deprecated: false,
+                    const_value: None,
                     wire_name: "email".to_string(),
                 },
             ],

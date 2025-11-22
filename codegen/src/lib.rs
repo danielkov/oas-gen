@@ -154,3 +154,147 @@ pub trait Generator: Send + Sync {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ir::gen_ir::{
+        Additional, ApiMeta, CanonicalName, Docs, Field, Literal, StableId, TypeDecl, TypeKind,
+        TypeRef,
+    };
+    use std::collections::BTreeMap;
+
+    /// Mock generator for testing
+    struct MockGenerator;
+
+    impl Generator for MockGenerator {
+        fn generate(&self, ir: &GenIr, _config: &Config) -> Result<VirtualFS> {
+            let mut vfs = VirtualFS::new();
+
+            // Generate a simple file that lists all types and their const fields
+            let mut output = String::new();
+            output.push_str("# Generated Types\n\n");
+
+            for (id, type_decl) in &ir.types {
+                output.push_str(&format!("## Type: {} ({})\n", type_decl.name.pascal, id.0));
+
+                if let TypeKind::Struct { fields, .. } = &type_decl.kind {
+                    for field in fields {
+                        output.push_str(&format!(
+                            "- {}: {}",
+                            field.name.camel, field.ty.target.0
+                        ));
+
+                        if let Some(const_val) = &field.const_value {
+                            output.push_str(&format!(" = const {:?}", const_val));
+                        }
+
+                        output.push('\n');
+                    }
+                }
+
+                output.push('\n');
+            }
+
+            vfs.add_file("types.txt", output);
+            Ok(vfs)
+        }
+
+        fn language(&self) -> &str {
+            "mock"
+        }
+    }
+
+    #[test]
+    fn test_generator_with_const_fields() {
+        // Create a simple IR with const fields
+        let mut types = BTreeMap::new();
+
+        let pet_type = TypeDecl {
+            id: StableId::new("Pet"),
+            name: CanonicalName::from_string("Pet"),
+            docs: Docs::default(),
+            kind: TypeKind::Struct {
+                fields: vec![
+                    Field {
+                        name: CanonicalName::from_string("type"),
+                        docs: Docs::default(),
+                        ty: TypeRef {
+                            target: StableId::new("String"),
+                            optional: false,
+                            nullable: false,
+                            by_ref: false,
+                            modifiers: vec![],
+                        },
+                        default: None,
+                        deprecated: false,
+                        const_value: Some(Literal::String("pet".to_string())),
+                        wire_name: "type".to_string(),
+                    },
+                    Field {
+                        name: CanonicalName::from_string("name"),
+                        docs: Docs::default(),
+                        ty: TypeRef {
+                            target: StableId::new("String"),
+                            optional: false,
+                            nullable: false,
+                            by_ref: false,
+                            modifiers: vec![],
+                        },
+                        default: None,
+                        deprecated: false,
+                        const_value: None,
+                        wire_name: "name".to_string(),
+                    },
+                    Field {
+                        name: CanonicalName::from_string("active"),
+                        docs: Docs::default(),
+                        ty: TypeRef {
+                            target: StableId::new("Boolean"),
+                            optional: false,
+                            nullable: false,
+                            by_ref: false,
+                            modifiers: vec![],
+                        },
+                        default: None,
+                        deprecated: false,
+                        const_value: Some(Literal::Bool(true)),
+                        wire_name: "active".to_string(),
+                    },
+                ],
+                additional: Additional::Forbidden,
+                discriminator: None,
+            },
+            origin: None,
+        };
+
+        types.insert(StableId::new("Pet"), pet_type);
+
+        let gen_ir = GenIr {
+            api: ApiMeta {
+                title: "Test API".to_string(),
+                version: "1.0.0".to_string(),
+                package_name: CanonicalName::from_string("test-api"),
+                docs: Docs::default(),
+            },
+            types,
+            services: vec![],
+            auth_schemes: vec![],
+            errors: vec![],
+            server_sets: vec![],
+        };
+
+        let generator = MockGenerator;
+        let config = Config::default();
+
+        let vfs = generator.generate(&gen_ir, &config).unwrap();
+
+        // Verify the generated content
+        let content = vfs.get_file_str(Path::new("types.txt")).unwrap().unwrap();
+
+        assert!(content.contains("Type: Pet"));
+        assert!(content.contains("type: String = const String(\"pet\")"));
+        assert!(content.contains("name: String\n")); // No const value
+        assert!(content.contains("active: Boolean = const Bool(true)"));
+    }
+}

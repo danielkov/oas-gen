@@ -355,8 +355,13 @@
     "schemas": {
       "Pet": {
         "type": "object",
-        "required": ["id", "name", "species", "status"],
+        "required": ["id", "name", "species", "status", "type"],
         "properties": {
+          "type": {
+            "type": "string",
+            "const": "pet",
+            "description": "Discriminator field - always 'pet' for this type"
+          },
           "id": {
             "type": "string",
             "format": "uuid",
@@ -681,8 +686,13 @@
       },
       "Error": {
         "type": "object",
-        "required": ["code", "message"],
+        "required": ["code", "message", "success"],
         "properties": {
+          "success": {
+            "type": "boolean",
+            "const": false,
+            "description": "Always false for error responses"
+          },
           "code": {
             "type": "string",
             "description": "Error code"

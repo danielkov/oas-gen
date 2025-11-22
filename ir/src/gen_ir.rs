@@ -229,6 +229,8 @@ pub struct Field {
     pub ty: TypeRef,
     pub default: Option<Literal>,
     pub deprecated: bool,
+    /// If present, this field has a constant value that must always be this literal.
+    pub const_value: Option<Literal>,
     /// Hints for serde/jackson/etc. (e.g., wire name differs; explode styles are gone at this layer)
     pub wire_name: String,
 }
