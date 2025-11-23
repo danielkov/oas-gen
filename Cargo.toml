@@ -8,5 +8,4 @@ members = [
   "parser2",
   "templates/typescript",
   "templates/rust-axum",
-  "test-generated/petstore-rust-axum",
 ]

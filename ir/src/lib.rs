@@ -196,10 +196,10 @@ fn associate_tags_with_types(types: &mut BTreeMap<StableId, TypeDecl>, services:
             }
 
             // From success response
-            if let Some(success) = &operation.success {
-                if let Some(ty) = &success.ty {
-                    collect_type_ids_from_type_ref(ty, &mut type_ids);
-                }
+            if let Some(success) = &operation.success
+                && let Some(ty) = &success.ty
+            {
+                collect_type_ids_from_type_ref(ty, &mut type_ids);
             }
 
             // From alt success responses
@@ -247,12 +247,12 @@ fn add_tag_recursively(types: &mut BTreeMap<StableId, TypeDecl>, type_id: &Stabl
                     ids.extend(variant_ids);
                 }
             }
-            TypeKind::Alias { aliased } => {
-                if let AliasTarget::Reference(type_ref) = aliased {
-                    let mut alias_ids = HashSet::new();
-                    collect_type_ids_from_type_ref(type_ref, &mut alias_ids);
-                    ids.extend(alias_ids);
-                }
+            TypeKind::Alias {
+                aliased: AliasTarget::Reference(type_ref),
+            } => {
+                let mut alias_ids = HashSet::new();
+                collect_type_ids_from_type_ref(type_ref, &mut alias_ids);
+                ids.extend(alias_ids);
             }
             _ => {}
         }
@@ -639,11 +639,10 @@ fn convert_all_of_to_type(
                     let is_nullable = prop_schema.is_nullable().unwrap_or(false);
 
                     // Check if this field has a const value
-                    let const_value = if let Some(const_val) = &prop_schema.const_value {
-                        Some(convert_json_value_to_literal(const_val))
-                    } else {
-                        None
-                    };
+                    let const_value = prop_schema
+                        .const_value
+                        .as_ref()
+                        .map(convert_json_value_to_literal);
 
                     let new_field = Field {
                         name: CanonicalName::from_string(prop_name),
@@ -791,11 +790,10 @@ fn convert_properties(
             let prop_schema = prop_schema_ref.resolve(ctx.spec).ok()?;
 
             // Check if this field has a const value
-            let const_value = if let Some(const_val) = &prop_schema.const_value {
-                Some(convert_json_value_to_literal(const_val))
-            } else {
-                None
-            };
+            let const_value = prop_schema
+                .const_value
+                .as_ref()
+                .map(convert_json_value_to_literal);
 
             Some(Field {
                 name: CanonicalName::from_string(prop_name),

@@ -39,6 +39,9 @@ run-stripe:
 run-openrouter:
 	cargo run --bin oas-gen -- examples/openrouter.yml -t typescript -v -o test-generated/openrouter-typescript
 
+run-axum-petstore:
+	cargo run --bin oas-gen -- examples/petstore.json -t rust-axum -v -o test-generated/petstore-axum
+
 run-all: run run-unkey run-stripe run-openrouter
 
 # Clean build artifacts
