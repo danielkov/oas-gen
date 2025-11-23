@@ -42,6 +42,9 @@ run-openrouter:
 run-axum-petstore:
 	cargo run --bin oas-gen -- examples/petstore.json -t rust-axum -v -o test-generated/petstore-axum
 
+run-axum-openrouter:
+	cargo run --bin oas-gen -- examples/openrouter.yml -t rust-axum -v -o test-generated/openrouter-axum
+
 run-all: run run-unkey run-stripe run-openrouter
 
 # Clean build artifacts

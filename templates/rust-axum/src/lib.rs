@@ -127,11 +127,106 @@ impl RustAxumGenerator {
                 let target = self.render_alias_target(aliased, ir);
                 Ok(format!("pub type {} = {};", type_decl.name.pascal, target))
             }
-            TypeKind::Union { .. } => Ok(format!(
-                "// TODO: Union type {}\npub type {} = serde_json::Value;",
-                type_decl.name.pascal, type_decl.name.pascal
-            )),
+            TypeKind::Union { style, variants } => {
+                self.render_union(type_decl, style, variants, ir)
+            }
         }
+    }
+
+    fn render_union(
+        &self,
+        type_decl: &TypeDecl,
+        style: &ir::gen_ir::UnionStyle,
+        variants: &[ir::gen_ir::Variant],
+        ir: &GenIr,
+    ) -> Result<String> {
+        use ir::gen_ir::UnionStyle;
+
+        match style {
+            UnionStyle::AllOf => self.render_allof(type_decl, variants, ir),
+            UnionStyle::OneOf => self.render_oneof_anyof(type_decl, variants, ir, false),
+            UnionStyle::AnyOf => self.render_oneof_anyof(type_decl, variants, ir, false),
+            UnionStyle::Discriminated { tag } => {
+                self.render_discriminated(type_decl, variants, tag, ir)
+            }
+        }
+    }
+
+    fn render_allof(
+        &self,
+        type_decl: &TypeDecl,
+        variants: &[ir::gen_ir::Variant],
+        ir: &GenIr,
+    ) -> Result<String> {
+        let mut fields = Vec::new();
+
+        for variant in variants {
+            let variant_type = self.render_type_ref(&variant.ty, ir);
+            let field_name = Self::escape_rust_keyword(&variant.name.snake);
+            fields.push(format!(
+                "    #[serde(flatten)]\n    pub {}: {},",
+                field_name, variant_type
+            ));
+        }
+
+        Ok(format!(
+            "#[derive(Debug, Clone, Serialize, Deserialize)]\npub struct {} {{\n{}\n}}",
+            type_decl.name.pascal,
+            fields.join("\n")
+        ))
+    }
+
+    fn render_oneof_anyof(
+        &self,
+        type_decl: &TypeDecl,
+        variants: &[ir::gen_ir::Variant],
+        ir: &GenIr,
+        _is_strict: bool,
+    ) -> Result<String> {
+        let mut variant_lines = Vec::new();
+
+        for variant in variants {
+            let variant_name = Self::escape_rust_keyword(&variant.name.pascal);
+            let variant_type = self.render_type_ref(&variant.ty, ir);
+            variant_lines.push(format!("    {}({}),", variant_name, variant_type));
+        }
+
+        Ok(format!(
+            "#[derive(Debug, Clone, Serialize, Deserialize)]\n#[serde(untagged)]\npub enum {} {{\n{}\n}}",
+            type_decl.name.pascal,
+            variant_lines.join("\n")
+        ))
+    }
+
+    fn render_discriminated(
+        &self,
+        type_decl: &TypeDecl,
+        variants: &[ir::gen_ir::Variant],
+        tag: &str,
+        ir: &GenIr,
+    ) -> Result<String> {
+        let mut variant_lines = Vec::new();
+
+        for variant in variants {
+            let variant_name = Self::escape_rust_keyword(&variant.name.pascal);
+            let variant_type = self.render_type_ref(&variant.ty, ir);
+
+            if let Some(tag_value) = &variant.tag_value {
+                variant_lines.push(format!(
+                    "    #[serde(rename = \"{}\")]\n    {}({}),",
+                    tag_value, variant_name, variant_type
+                ));
+            } else {
+                variant_lines.push(format!("    {}({}),", variant_name, variant_type));
+            }
+        }
+
+        Ok(format!(
+            "#[derive(Debug, Clone, Serialize, Deserialize)]\n#[serde(tag = \"{}\")]\npub enum {} {{\n{}\n}}",
+            tag,
+            type_decl.name.pascal,
+            variant_lines.join("\n")
+        ))
     }
 
     fn render_type_ref(&self, type_ref: &ir::gen_ir::TypeRef, ir: &GenIr) -> String {

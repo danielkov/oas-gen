@@ -635,7 +635,7 @@ fn convert_all_of_to_type(
                 let is_required = required_set.contains(prop_name);
 
                 if let Ok(prop_schema) = prop_schema_ref.resolve(ctx.spec) {
-                    let ty = convert_object_schema_to_type_ref(ctx, &prop_schema);
+                    let ty = convert_schema_ref_to_type_ref(ctx, prop_schema_ref);
                     let is_nullable = prop_schema.is_nullable().unwrap_or(false);
 
                     // Check if this field has a const value
@@ -744,13 +744,9 @@ fn convert_properties(
             // Check if this is an inline schema that should be hoisted
             let (ty, is_nullable) = match prop_schema_ref {
                 oas3::spec::ObjectOrReference::Ref { .. } => {
-                    // Reference - use normal conversion
+                    // Reference - use ref conversion which preserves type identity
+                    let ty = convert_schema_ref_to_type_ref(ctx, prop_schema_ref);
                     let prop_schema = prop_schema_ref.resolve(ctx.spec).ok()?;
-                    let ty = convert_object_schema_to_type_ref_with_hint(
-                        ctx,
-                        &prop_schema,
-                        Some(prop_name),
-                    );
                     let is_nullable = prop_schema.is_nullable().unwrap_or(false);
                     (ty, is_nullable)
                 }
