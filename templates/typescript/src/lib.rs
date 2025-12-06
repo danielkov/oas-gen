@@ -605,6 +605,18 @@ impl Generator for TypeScriptGenerator {
             return Err(Error::Custom("npm install failed".to_string()));
         }
 
+        // Run tsc
+        let status = Command::new("npm")
+            .arg("run")
+            .arg("build")
+            .current_dir(output_dir)
+            .status()
+            .map_err(|e| Error::Custom(format!("Failed to run tsc: {}", e)))?;
+
+        if !status.success() {
+            return Err(Error::Custom("npm run build failed".to_string()));
+        }
+
         Ok(())
     }
 }
