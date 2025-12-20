@@ -90,8 +90,7 @@ fn resolve_refs_with_context(
 
                     // Resolve the file path relative to base_dir
                     let full_path = base_dir.join(file_path);
-                    let canonical_path =
-                        full_path.canonicalize().map_err(|e| ParserError::Io(e))?;
+                    let canonical_path = full_path.canonicalize().map_err(ParserError::Io)?;
 
                     // Load the external file (use cache if available)
                     let external_doc = if let Some(cached) = file_cache.get(&canonical_path) {
@@ -215,7 +214,7 @@ fn extract_schema_name(pointer: &str) -> String {
     pointer
         .trim_start_matches('/')
         .split('/')
-        .last()
+        .next_back()
         .unwrap_or("Unknown")
         .to_string()
 }
@@ -264,7 +263,7 @@ fn normalize_internal_refs(value: &mut Value) {
                             .trim_start_matches('#')
                             .trim_start_matches('/')
                             .split('/')
-                            .last()
+                            .next_back()
                             .unwrap_or("");
 
                         if !name.is_empty() {
@@ -303,7 +302,7 @@ fn find_internal_refs(value: &Value, refs: &mut HashSet<String>) {
                         .trim_start_matches('#')
                         .trim_start_matches('/')
                         .split('/')
-                        .last()
+                        .next_back()
                         .unwrap_or("")
                         .to_string();
 
