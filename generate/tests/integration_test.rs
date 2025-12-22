@@ -35,7 +35,7 @@ fn create_test_ir() -> GenIr {
 
     // Add a simple struct type
     let user_type = TypeDecl {
-        id: StableId("User".to_string()),
+        id: StableId::new("User"),
         name: CanonicalName {
             canonical: "User".to_string(),
             snake: "user".to_string(),
@@ -70,7 +70,7 @@ fn create_test_ir() -> GenIr {
                         ..Default::default()
                     },
                     ty: TypeRef {
-                        target: StableId("String".to_string()),
+                        target: StableId::primitive(ir::gen_ir::Primitive::String),
                         optional: false,
                         nullable: false,
                         by_ref: false,
@@ -96,7 +96,7 @@ fn create_test_ir() -> GenIr {
                         ..Default::default()
                     },
                     ty: TypeRef {
-                        target: StableId("String".to_string()),
+                        target: StableId::primitive(ir::gen_ir::Primitive::String),
                         optional: false,
                         nullable: false,
                         by_ref: false,
@@ -122,7 +122,7 @@ fn create_test_ir() -> GenIr {
                         ..Default::default()
                     },
                     ty: TypeRef {
-                        target: StableId("String".to_string()),
+                        target: StableId::primitive(ir::gen_ir::Primitive::String),
                         optional: true,
                         nullable: false,
                         by_ref: false,
@@ -145,7 +145,7 @@ fn create_test_ir() -> GenIr {
 
     // Add an enum type
     let status_type = TypeDecl {
-        id: StableId("Status".to_string()),
+        id: StableId::new("Status"),
         name: CanonicalName {
             canonical: "Status".to_string(),
             snake: "status".to_string(),
@@ -198,7 +198,7 @@ fn create_test_ir() -> GenIr {
 
     // Add a simple service with one operation
     let service = Service {
-        id: StableId("UserService".to_string()),
+        id: StableId::new("UserService"),
         name: CanonicalName {
             canonical: "UserService".to_string(),
             snake: "user_service".to_string(),
@@ -214,7 +214,7 @@ fn create_test_ir() -> GenIr {
         },
         server_set: None,
         operations: vec![Operation {
-            id: StableId("GetUser".to_string()),
+            id: StableId::new("GetUser"),
             name: CanonicalName {
                 canonical: "GetUser".to_string(),
                 snake: "get_user".to_string(),

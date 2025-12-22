@@ -233,7 +233,7 @@ impl RustAxumGenerator {
         let base = if let Some(type_decl) = ir.types.get(&type_ref.target) {
             type_decl.name.pascal.clone()
         } else {
-            self.render_primitive_from_id(&type_ref.target.0)
+            self.render_type_id(&type_ref.target)
         };
 
         let mut result = base;
@@ -259,21 +259,23 @@ impl RustAxumGenerator {
         result
     }
 
-    fn render_primitive_from_id(&self, id: &str) -> String {
-        if let Some(prim_name) = id.strip_prefix("Primitive_") {
-            match prim_name {
-                "String" | "Uuid" | "Date" | "DateTime" => "String".to_string(),
-                "Bool" => "bool".to_string(),
-                "I32" => "i32".to_string(),
-                "I64" => "i64".to_string(),
-                "F32" => "f32".to_string(),
-                "F64" => "f64".to_string(),
-                "Bytes" => "Vec<u8>".to_string(),
-                "Decimal" => "String".to_string(),
-                _ => "serde_json::Value".to_string(),
-            }
-        } else {
-            "serde_json::Value".to_string()
+    fn render_type_id(&self, id: &ir::gen_ir::StableId) -> String {
+        match id {
+            ir::gen_ir::StableId::Primitive(p) => match p {
+                ir::gen_ir::Primitive::String => "String".to_string(),
+                ir::gen_ir::Primitive::Bool => "bool".to_string(),
+                ir::gen_ir::Primitive::I32 => "i32".to_string(),
+                ir::gen_ir::Primitive::I64 => "i64".to_string(),
+                ir::gen_ir::Primitive::F32 => "f32".to_string(),
+                ir::gen_ir::Primitive::F64 => "f64".to_string(),
+                ir::gen_ir::Primitive::Date => "jiff::civil::Date".to_string(),
+                ir::gen_ir::Primitive::DateTime => "jiff::Timestamp".to_string(),
+                ir::gen_ir::Primitive::Uuid => "uuid::Uuid".to_string(),
+                ir::gen_ir::Primitive::Bytes => "bytes::Bytes".to_string(),
+                ir::gen_ir::Primitive::Decimal => "rust_decimal::Decimal".to_string(),
+                ir::gen_ir::Primitive::Any => "serde_json::Value".to_string(),
+            },
+            ir::gen_ir::StableId::Named(name) => name.clone(),
         }
     }
 
@@ -286,7 +288,12 @@ impl RustAxumGenerator {
             AliasTarget::Primitive(Primitive::I64) => "i64".to_string(),
             AliasTarget::Primitive(Primitive::F32) => "f32".to_string(),
             AliasTarget::Primitive(Primitive::F64) => "f64".to_string(),
-            AliasTarget::Primitive(_) => "String".to_string(),
+            AliasTarget::Primitive(Primitive::Date) => "jiff::civil::Date".to_string(),
+            AliasTarget::Primitive(Primitive::DateTime) => "jiff::Timestamp".to_string(),
+            AliasTarget::Primitive(Primitive::Uuid) => "uuid::Uuid".to_string(),
+            AliasTarget::Primitive(Primitive::Bytes) => "bytes::Bytes".to_string(),
+            AliasTarget::Primitive(Primitive::Decimal) => "rust_decimal::Decimal".to_string(),
+            AliasTarget::Primitive(Primitive::Any) => "serde_json::Value".to_string(),
             AliasTarget::Composite(Composite::List(inner)) => {
                 format!("Vec<{}>", self.render_type_ref(inner, ir))
             }

@@ -153,6 +153,27 @@
         }
       }
     },
+    "/pets/export": {
+      "get": {
+        "tags": ["pets"],
+        "summary": "Export pets data",
+        "description": "Export all pets data as a binary archive file",
+        "operationId": "exportPets",
+        "responses": {
+          "200": {
+            "description": "Export archive file",
+            "content": {
+              "application/zip": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/pets/{petId}": {
       "get": {
         "tags": ["pets"],

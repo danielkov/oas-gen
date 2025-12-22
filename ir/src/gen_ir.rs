@@ -8,11 +8,20 @@ pub type Map<K, V> = BTreeMap<K, V>;
 
 /// A globally stable identifier for types/operations/services usable as filename, symbol, etc.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
-pub struct StableId(pub String);
+#[serde(untagged)]
+pub enum StableId {
+    /// A primitive type (built-in)
+    Primitive(Primitive),
+    /// A named type (user-defined from schema)
+    Named(String),
+}
 
 impl std::fmt::Display for StableId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
+        match self {
+            StableId::Primitive(p) => write!(f, "Primitive_{:?}", p),
+            StableId::Named(s) => write!(f, "{}", s),
+        }
     }
 }
 
@@ -194,7 +203,7 @@ pub enum AliasTarget {
 }
 
 /// First-class primitives commonly used by generators.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 pub enum Primitive {
     Any,
     Bool,
@@ -535,8 +544,14 @@ pub struct DualView {
 // ############### Helper Functions ###############################################
 
 impl StableId {
+    /// Create a named type identifier
     pub fn new(s: impl Into<String>) -> Self {
-        Self(s.into())
+        Self::Named(s.into())
+    }
+
+    /// Create a primitive type identifier
+    pub fn primitive(p: Primitive) -> Self {
+        Self::Primitive(p)
     }
 }
 

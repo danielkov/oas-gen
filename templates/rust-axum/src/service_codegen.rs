@@ -17,8 +17,35 @@ fn escape_keyword(name: &str) -> String {
 }
 
 mod filters {
+    use ir::gen_ir::StableId;
+
     pub fn escape_rust_keyword(name: &str, _: &dyn askama::Values) -> askama::Result<String> {
         Ok(super::escape_keyword(name))
+    }
+
+    /// Render a type reference to its Rust type
+    pub fn render_type(type_id: &StableId, _: &dyn askama::Values) -> askama::Result<String> {
+        match type_id {
+            StableId::Primitive(p) => {
+                use ir::gen_ir::Primitive;
+                let rust_type = match p {
+                    Primitive::String => "String",
+                    Primitive::Bool => "bool",
+                    Primitive::I32 => "i32",
+                    Primitive::I64 => "i64",
+                    Primitive::F32 => "f32",
+                    Primitive::F64 => "f64",
+                    Primitive::Date => "jiff::civil::Date",
+                    Primitive::DateTime => "jiff::Timestamp",
+                    Primitive::Uuid => "uuid::Uuid",
+                    Primitive::Bytes => "bytes::Bytes",
+                    Primitive::Decimal => "rust_decimal::Decimal",
+                    Primitive::Any => "serde_json::Value",
+                };
+                Ok(rust_type.to_string())
+            }
+            StableId::Named(name) => Ok(format!("crate::types::{}", name)),
+        }
     }
 
     /// Convert HTTP status code to StatusCode expression (constant or unsafe constructor)

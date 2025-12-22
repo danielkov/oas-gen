@@ -30,7 +30,7 @@ pub struct AuthApiKey(pub String);
 // {{ op.name.pascal }} types
 {% if let Some(success) = op.success -%}
 {% if let Some(ty) = success.ty -%}
-pub type {{ op.name.pascal }}Result = Result<crate::types::{{ ty.target }}, {{ op.name.pascal }}Error>;
+pub type {{ op.name.pascal }}Result = Result<{{ ty.target|render_type }}, {{ op.name.pascal }}Error>;
 {% else -%}
 pub type {{ op.name.pascal }}Result = Result<(), {{ op.name.pascal }}Error>;
 {% endif -%}
@@ -44,7 +44,7 @@ pub enum {{ op.name.pascal }}Error {
     {% when ir::gen_ir::ErrorUse::Inline with (error_decl) -%}
     {% for variant in error_decl.variants -%}
     /// Status: {{ variant.status|fmt("{:?}") }}
-    {{ variant.name.pascal }}{% if let Some(ty) = variant.ty %}(crate::types::{{ ty.target }}){% endif %},
+    {{ variant.name.pascal }}{% if let Some(ty) = variant.ty %}({{ ty.target|render_type }}){% endif %},
     {% endfor -%}
     {% when _ -%}
     InternalError(String),

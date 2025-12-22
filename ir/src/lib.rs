@@ -41,8 +41,10 @@ impl<'a> BuildContext<'a> {
         // Named types from components.schemas should not be deduplicated
         let id = decl.id.clone();
         // Normalize to PascalCase for collision detection
-        let normalized_name = to_pascal_case(&id.0);
-        self.used_type_names.insert(normalized_name);
+        if let StableId::Named(name) = &id {
+            let normalized_name = to_pascal_case(name);
+            self.used_type_names.insert(normalized_name);
+        }
         self.types.insert(id.clone(), decl);
         id
     }
@@ -61,8 +63,10 @@ impl<'a> BuildContext<'a> {
         // New unique type - add it
         let id = decl.id.clone();
         // Normalize to PascalCase for collision detection
-        let normalized_name = to_pascal_case(&id.0);
-        self.used_type_names.insert(normalized_name);
+        if let StableId::Named(name) = &id {
+            let normalized_name = to_pascal_case(name);
+            self.used_type_names.insert(normalized_name);
+        }
         self.type_structure_cache.insert(structure_hash, id.clone());
         self.types.insert(id.clone(), decl);
         id
@@ -330,7 +334,7 @@ fn add_tag_recursively(types: &mut BTreeMap<StableId, TypeDecl>, type_id: &Stabl
 /// Collect all StableIds from a TypeRef (including nested ones)
 fn collect_type_ids_from_type_ref(type_ref: &TypeRef, ids: &mut HashSet<StableId>) {
     // Don't collect primitive types
-    if type_ref.target.0.starts_with("Primitive_") {
+    if matches!(type_ref.target, StableId::Primitive(_)) {
         return;
     }
 
@@ -1099,10 +1103,10 @@ fn convert_object_schema_to_type_ref_with_hint(
             | oas3::spec::SchemaTypeSet::Single(oas3::spec::SchemaType::Integer)
             | oas3::spec::SchemaTypeSet::Single(oas3::spec::SchemaType::Number)
             | oas3::spec::SchemaTypeSet::Single(oas3::spec::SchemaType::Boolean) => {
-                // For primitives, create a synthetic ID based on the type
+                // For primitives, create a StableId with the primitive variant
                 let primitive = infer_primitive_from_schema(schema);
                 return TypeRef {
-                    target: StableId::new(format!("Primitive_{:?}", primitive)),
+                    target: StableId::primitive(primitive),
                     optional: false,
                     nullable,
                     by_ref: false,
@@ -3120,7 +3124,7 @@ mod tests {
                     for field in fields {
                         let opt = if field.ty.optional { "?" } else { "" };
                         let nullable = if field.ty.nullable { " | null" } else { "" };
-                        let mut type_str = field.ty.target.0.clone();
+                        let mut type_str = field.ty.target.to_string();
 
                         // Handle modifiers (like List)
                         for modifier in &field.ty.modifiers {
@@ -3160,13 +3164,13 @@ mod tests {
                         output.push_str(&format!("{:?}\n\n", c));
                     }
                     AliasTarget::Reference(r) => {
-                        output.push_str(&format!("{}\n\n", r.target.0));
+                        output.push_str(&format!("{}\n\n", r.target.to_string()));
                     }
                 },
                 TypeKind::Union { style, variants } => {
                     output.push_str(&format!("union<{:?}> {{\n", style));
                     for variant in variants {
-                        let type_str = &variant.ty.target.0;
+                        let type_str = &variant.ty.target.to_string();
                         output.push_str(&format!("  {}: {}\n", variant.name.pascal, type_str));
                     }
                     output.push_str("}\n\n");
@@ -3968,7 +3972,7 @@ type Extended = {
                 .expect("account field should exist");
 
             assert_eq!(
-                account_field.ty.target.0, "AccountOrRef",
+                account_field.ty.target.to_string(), "AccountOrRef",
                 "account field should reference AccountOrRef type"
             );
         } else {
@@ -4064,7 +4068,7 @@ type Extended = {
                 .expect("customer field should exist");
 
             assert_eq!(
-                customer_field.ty.target.0, "CustomerUnion",
+                customer_field.ty.target.to_string(), "CustomerUnion",
                 "customer field should reference CustomerUnion type"
             );
         } else {

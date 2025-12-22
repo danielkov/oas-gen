@@ -116,10 +116,10 @@ impl TypeScriptGenerator {
                 "number".to_string()
             }
             Primitive::String => "string".to_string(),
-            Primitive::Date | Primitive::DateTime => "string".to_string(),
+            Primitive::Date | Primitive::DateTime => "Date".to_string(),
             Primitive::Uuid => "string".to_string(),
-            Primitive::Bytes => "string".to_string(),
-            Primitive::Decimal => "string".to_string(),
+            Primitive::Bytes => "Uint8Array".to_string(),
+            Primitive::Decimal => "number".to_string(),
         }
     }
 
@@ -171,21 +171,27 @@ impl TypeScriptGenerator {
         let base = if let Some(type_decl) = ir.types.get(&type_ref.target) {
             type_decl.name.pascal.clone()
         } else {
-            let target_str = type_ref.target.0.as_str();
-
-            if let Some(primitive_part) = target_str.strip_prefix("Primitive_") {
-                match primitive_part {
-                    "String" | "Uuid" | "Date" | "DateTime" | "Bytes" | "Decimal" => {
-                        "string".to_string()
+            match &type_ref.target {
+                ir::gen_ir::StableId::Primitive(p) => {
+                    use ir::gen_ir::Primitive;
+                    match p {
+                        Primitive::String
+                        | Primitive::Uuid
+                        | Primitive::Date
+                        | Primitive::DateTime
+                        | Primitive::Bytes
+                        | Primitive::Decimal => "string".to_string(),
+                        Primitive::Bool => "boolean".to_string(),
+                        Primitive::I32 | Primitive::I64 | Primitive::F32 | Primitive::F64 => {
+                            "number".to_string()
+                        }
+                        Primitive::Any => "any".to_string(),
                     }
-                    "Bool" => "boolean".to_string(),
-                    "I32" | "I64" | "F32" | "F64" => "number".to_string(),
-                    "Any" => "any".to_string(),
-                    _ => "any".to_string(),
                 }
-            } else {
-                // Can't find the type - return any
-                "any".to_string()
+                ir::gen_ir::StableId::Named(_) => {
+                    // Can't find the type - return any
+                    "any".to_string()
+                }
             }
         };
 
@@ -753,7 +759,7 @@ struct ServiceExportData {
 mod tests {
     use super::*;
     use ir::gen_ir::{
-        Additional, CanonicalName, Docs, Field, StableId, TypeDecl, TypeKind, TypeRef,
+        Additional, CanonicalName, Docs, Field, Primitive, StableId, TypeDecl, TypeKind, TypeRef,
     };
     use std::collections::{BTreeMap, BTreeSet};
 
@@ -784,7 +790,7 @@ mod tests {
                 external_urls: Vec::new(),
             },
             ty: TypeRef {
-                target: StableId("Primitive_String".to_string()),
+                target: StableId::primitive(Primitive::String),
                 optional: false,
                 nullable: false,
                 by_ref: false,
@@ -797,7 +803,7 @@ mod tests {
         };
 
         let type_decl = TypeDecl {
-            id: StableId("TestType".to_string()),
+            id: StableId::new("TestType"),
             name: type_name,
             docs: type_docs,
             kind: TypeKind::Struct {
@@ -867,7 +873,7 @@ mod tests {
             name: CanonicalName::from_string("simpleField"),
             docs: Docs::default(), // No summary or description
             ty: TypeRef {
-                target: StableId("Primitive_String".to_string()),
+                target: StableId::primitive(Primitive::String),
                 optional: false,
                 nullable: false,
                 by_ref: false,
@@ -880,7 +886,7 @@ mod tests {
         };
 
         let type_decl = TypeDecl {
-            id: StableId("SimpleType".to_string()),
+            id: StableId::new("SimpleType"),
             name: type_name,
             docs: Docs::default(), // No summary or description
             kind: TypeKind::Struct {
@@ -944,7 +950,7 @@ mod tests {
                     external_urls: Vec::new(),
                 },
                 ty: TypeRef {
-                    target: StableId("Primitive_String".to_string()),
+                    target: StableId::primitive(Primitive::String),
                     optional: false,
                     nullable: false,
                     by_ref: false,
@@ -966,7 +972,7 @@ mod tests {
                     external_urls: Vec::new(),
                 },
                 ty: TypeRef {
-                    target: StableId("Primitive_String".to_string()),
+                    target: StableId::primitive(Primitive::String),
                     optional: false,
                     nullable: false,
                     by_ref: false,
@@ -981,7 +987,7 @@ mod tests {
                 name: CanonicalName::from_string("active"),
                 docs: Docs::default(),
                 ty: TypeRef {
-                    target: StableId("Primitive_Bool".to_string()),
+                    target: StableId::primitive(Primitive::Bool),
                     optional: false,
                     nullable: false,
                     by_ref: false,
@@ -995,7 +1001,7 @@ mod tests {
         ];
 
         let type_decl = TypeDecl {
-            id: StableId("Pet".to_string()),
+            id: StableId::new("Pet"),
             name: type_name,
             docs: Docs::default(),
             kind: TypeKind::Struct {

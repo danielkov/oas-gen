@@ -176,11 +176,11 @@ mod tests {
             output.push_str("# Generated Types\n\n");
 
             for (id, type_decl) in &ir.types {
-                output.push_str(&format!("## Type: {} ({})\n", type_decl.name.pascal, id.0));
+                output.push_str(&format!("## Type: {} ({})\n", type_decl.name.pascal, id.to_string()));
 
                 if let TypeKind::Struct { fields, .. } = &type_decl.kind {
                     for field in fields {
-                        output.push_str(&format!("- {}: {}", field.name.camel, field.ty.target.0));
+                        output.push_str(&format!("- {}: {}", field.name.camel, field.ty.target.to_string()));
 
                         if let Some(const_val) = &field.const_value {
                             output.push_str(&format!(" = const {:?}", const_val));
