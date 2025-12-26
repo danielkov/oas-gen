@@ -14,24 +14,16 @@ pub struct LintCtx<'a> {
     pub indexes: &'a Indexes,
     /// Span database for source locations
     pub span_db: &'a SpanDb,
-    /// The original source text
-    pub source: &'a str,
     /// Lazily-computed set of all $ref values used in the spec
     used_refs: OnceLock<FxHashSet<String>>,
 }
 
 impl<'a> LintCtx<'a> {
-    pub fn new(
-        spec: &'a oas3::Spec,
-        indexes: &'a Indexes,
-        span_db: &'a SpanDb,
-        source: &'a str,
-    ) -> Self {
+    pub fn new(spec: &'a oas3::Spec, indexes: &'a Indexes, span_db: &'a SpanDb) -> Self {
         Self {
             spec,
             indexes,
             span_db,
-            source,
             used_refs: OnceLock::new(),
         }
     }

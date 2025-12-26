@@ -137,14 +137,19 @@ impl RustAxumGenerator {
         // Replace invalid characters with underscores
         let valid: String = snake
             .chars()
-            .map(|c| if c.is_alphanumeric() || c == '_' { c } else { '_' })
+            .map(|c| {
+                if c.is_alphanumeric() || c == '_' {
+                    c
+                } else {
+                    '_'
+                }
+            })
             .collect();
 
         // If it starts with underscore followed by digit or is all underscores, prefix with 'f'
         if valid.is_empty()
             || valid.chars().all(|c| c == '_')
-            || (valid.starts_with('_')
-                && valid.chars().nth(1).is_some_and(|c| c.is_ascii_digit()))
+            || (valid.starts_with('_') && valid.chars().nth(1).is_some_and(|c| c.is_ascii_digit()))
         {
             let new_name = format!("f{}", valid);
             return (new_name, true);

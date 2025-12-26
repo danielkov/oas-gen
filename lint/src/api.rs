@@ -102,7 +102,7 @@ pub fn lint_with_ruleset(spec: &str, rule_set: RuleSet) -> Result<Validation, Li
     let indexes = Indexes::build(&parsed_spec);
 
     // Create lint context
-    let ctx = LintCtx::new(&parsed_spec, &indexes, &span_db, spec);
+    let ctx = LintCtx::new(&parsed_spec, &indexes, &span_db);
 
     // Run rules and collect findings
     let findings = run_rules(&ctx, rule_set);

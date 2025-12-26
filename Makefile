@@ -1,4 +1,4 @@
-.PHONY: help build test run clean fmt lint doc install release check all
+.PHONY: help build test run clean fmt fmt-check lint doc install release check check-ci test-cli all
 
 # Default target
 help:
@@ -9,11 +9,14 @@ help:
 	@echo "make run         - Run CLI with petstore example"
 	@echo "make clean       - Clean build artifacts"
 	@echo "make fmt         - Format code"
+	@echo "make fmt-check   - Check code formatting (CI)"
 	@echo "make lint        - Run clippy"
 	@echo "make doc         - Generate and open documentation"
 	@echo "make install     - Build and install binary"
 	@echo "make release     - Build optimized release binary"
-	@echo "make check       - Run fmt, lint, and test"
+	@echo "make test-cli    - Test CLI with petstore example"
+	@echo "make check       - Run fmt, lint, and test (local)"
+	@echo "make check-ci    - Run fmt-check, lint, and test (CI)"
 	@echo "make all         - Run check and build"
 
 # Build in debug mode
@@ -62,6 +65,10 @@ clean:
 fmt:
 	cargo fmt
 
+# Check formatting
+fmt-check:
+	cargo fmt -- --check
+
 # Run clippy
 lint:
 	cargo clippy -- -D warnings
@@ -79,11 +86,18 @@ release:
 	cargo build --release
 	@echo "Binary at: target/release/oas-gen"
 
-# Run all checks
+# Run all checks (for CI - non-modifying)
+check-ci: fmt-check lint test
+
+# Run all checks (for local dev - modifies code)
 check: fmt lint test
 
 # Full build pipeline
 all: check build
+
+# Test CLI with petstore example
+test-cli:
+	cargo run --bin oas-gen -- examples/petstore.json -t typescript -v
 
 # Test specific crate
 test-parser:

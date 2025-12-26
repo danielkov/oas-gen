@@ -759,10 +759,10 @@ struct OperationData {
 }
 
 struct ErrorVariantData {
-    class_name: String,     // e.g., "ListPetsNotFoundError"
-    status_code: u16,       // e.g., 404
-    has_body: bool,         // whether error has a typed body
-    body_type: String,      // e.g., "Error" or "void"
+    class_name: String, // e.g., "ListPetsNotFoundError"
+    status_code: u16,   // e.g., 404
+    has_body: bool,     // whether error has a typed body
+    body_type: String,  // e.g., "Error" or "void"
 }
 
 struct AuthSchemeUse {

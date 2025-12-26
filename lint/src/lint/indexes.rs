@@ -3,19 +3,6 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::model::escape_pointer_segment;
 
-/// Reference to an operation within the spec
-#[derive(Debug, Clone)]
-pub struct OpRef<'a> {
-    /// The path template (e.g., "/pets/{petId}")
-    pub path: &'a str,
-    /// The HTTP method (lowercase)
-    pub method: &'static str,
-    /// Reference to the operation
-    pub operation: &'a Operation,
-    /// JSON Pointer base for this operation (e.g., "/paths/~1pets/get")
-    pub ptr_base: String,
-}
-
 /// Pre-computed indexes for efficient lint rule execution.
 /// Built in a single traversal over the spec.
 #[derive(Debug, Default)]

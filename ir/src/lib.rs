@@ -4018,7 +4018,8 @@ type Extended = {
                 .expect("account field should exist");
 
             assert_eq!(
-                account_field.ty.target.to_string(), "AccountOrRef",
+                account_field.ty.target.to_string(),
+                "AccountOrRef",
                 "account field should reference AccountOrRef type"
             );
         } else {
@@ -4114,7 +4115,8 @@ type Extended = {
                 .expect("customer field should exist");
 
             assert_eq!(
-                customer_field.ty.target.to_string(), "CustomerUnion",
+                customer_field.ty.target.to_string(),
+                "CustomerUnion",
                 "customer field should reference CustomerUnion type"
             );
         } else {

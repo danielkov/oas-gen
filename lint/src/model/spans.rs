@@ -90,11 +90,6 @@ impl SpanDb {
 
         None
     }
-
-    /// Look up the key span for a pointer
-    pub fn resolve_key_span(&self, ptr: &str) -> Option<ByteSpan> {
-        self.key_spans.get(ptr).copied()
-    }
 }
 
 /// Line offset index for converting byte offsets to line/column

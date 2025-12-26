@@ -118,10 +118,7 @@ mod filters {
                 ))));
             }
             code => {
-                return Ok(format!(
-                    "StatusCode::from_u16_unchecked({})",
-                    code
-                ));
+                return Ok(format!("StatusCode::from_u16_unchecked({})", code));
             }
         };
         Ok(result.to_string())
