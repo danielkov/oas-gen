@@ -104,6 +104,55 @@ impl RustAxumGenerator {
         }
     }
 
+    /// Check if a name is a valid Rust identifier
+    fn is_valid_rust_ident(name: &str) -> bool {
+        if name.is_empty() {
+            return false;
+        }
+        let first = name.chars().next().unwrap();
+        if !first.is_alphabetic() && first != '_' {
+            return false;
+        }
+        name.chars().all(|c| c.is_alphanumeric() || c == '_')
+    }
+
+    /// Make a valid Rust field name from an arbitrary string.
+    /// Returns (field_name, needs_rename) where needs_rename is true if the original
+    /// name differs from the generated field name.
+    fn make_valid_field_name(original: &str, snake: &str) -> (String, bool) {
+        // If the snake case version is valid, use it
+        if Self::is_valid_rust_ident(snake) {
+            let escaped = Self::escape_rust_keyword(snake);
+            // Check if we need rename (either the original differs from snake, or we escaped a keyword)
+            let needs_rename = original != snake || escaped != snake;
+            return (escaped, needs_rename);
+        }
+
+        // If it starts with a digit, prefix with underscore
+        if snake.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+            let new_name = format!("_{}", snake);
+            return (new_name, true);
+        }
+
+        // Replace invalid characters with underscores
+        let valid: String = snake
+            .chars()
+            .map(|c| if c.is_alphanumeric() || c == '_' { c } else { '_' })
+            .collect();
+
+        // If it starts with underscore followed by digit or is all underscores, prefix with 'f'
+        if valid.is_empty()
+            || valid.chars().all(|c| c == '_')
+            || (valid.starts_with('_')
+                && valid.chars().nth(1).is_some_and(|c| c.is_ascii_digit()))
+        {
+            let new_name = format!("f{}", valid);
+            return (new_name, true);
+        }
+
+        (valid.clone(), original != valid)
+    }
+
     /// Render a type declaration
     fn render_type(&self, type_decl: &TypeDecl, ir: &GenIr) -> Result<String> {
         use ir::gen_ir::TypeKind;
@@ -113,12 +162,17 @@ impl RustAxumGenerator {
                 let fields_str: Vec<String> = fields
                     .iter()
                     .map(|f| {
-                        let field_name = Self::escape_rust_keyword(&f.name.snake);
-                        format!(
-                            "    pub {}: {},",
-                            field_name,
-                            self.render_type_ref(&f.ty, ir)
-                        )
+                        let (field_name, needs_rename) =
+                            Self::make_valid_field_name(&f.name.canonical, &f.name.snake);
+                        let type_str = self.render_type_ref(&f.ty, ir);
+                        if needs_rename {
+                            format!(
+                                "    #[serde(rename = \"{}\")]\n    pub {}: {},",
+                                f.name.canonical, field_name, type_str
+                            )
+                        } else {
+                            format!("    pub {}: {},", field_name, type_str)
+                        }
                     })
                     .collect();
 

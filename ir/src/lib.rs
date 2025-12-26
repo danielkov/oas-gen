@@ -204,7 +204,7 @@ fn hoist_inline_schema_with_parent(
         actual_id
     } else {
         // Fallback to Any if conversion fails
-        StableId::new("Any")
+        StableId::Primitive(Primitive::Any)
     }
 }
 
@@ -657,8 +657,8 @@ fn convert_all_of_to_type(
                             if nested_field.ty.nullable {
                                 existing_field.ty.nullable = true;
                             }
-                            if existing_field.ty.target == StableId::new("Any")
-                                && nested_field.ty.target != StableId::new("Any")
+                            if existing_field.ty.target == StableId::Primitive(Primitive::Any)
+                                && nested_field.ty.target != StableId::Primitive(Primitive::Any)
                             {
                                 existing_field.ty.target = nested_field.ty.target;
                                 existing_field.ty.modifiers = nested_field.ty.modifiers;
@@ -744,8 +744,8 @@ fn convert_all_of_to_type(
                         }
 
                         // Prefer non-Any types
-                        if existing_field.ty.target == StableId::new("Any")
-                            && new_field.ty.target != StableId::new("Any")
+                        if existing_field.ty.target == StableId::Primitive(Primitive::Any)
+                            && new_field.ty.target != StableId::Primitive(Primitive::Any)
                         {
                             existing_field.ty.target = new_field.ty.target;
                             existing_field.ty.modifiers = new_field.ty.modifiers;
@@ -1139,7 +1139,7 @@ fn convert_object_schema_to_type_ref_with_hint(
     }
 
     TypeRef {
-        target: StableId::new("Any"),
+        target: StableId::Primitive(Primitive::Any),
         optional: false,
         nullable,
         by_ref: false,
@@ -1162,7 +1162,7 @@ fn convert_schema_to_type_ref_with_hint_internal(
         oas3::spec::Schema::Boolean(oas3::spec::BooleanSchema(true)) => {
             // true schema accepts anything
             TypeRef {
-                target: StableId::new("Any"),
+                target: StableId::Primitive(Primitive::Any),
                 optional: false,
                 nullable: false,
                 by_ref: false,
@@ -1222,7 +1222,7 @@ fn convert_schema_ref_to_type_ref_with_hint(
         convert_object_schema_to_type_ref_with_hint(ctx, &schema, hint)
     } else {
         TypeRef {
-            target: StableId::new("Any"),
+            target: StableId::Primitive(Primitive::Any),
             optional: false,
             nullable: false,
             by_ref: false,
@@ -3152,7 +3152,7 @@ mod tests {
         let body_type = &op.http.body.as_ref().unwrap().variants[0].ty.target;
 
         // Should be Any, not a hoisted type
-        assert_eq!(body_type, &StableId::new("Any"));
+        assert_eq!(body_type, &StableId::Primitive(Primitive::Any));
     }
 
     // Helper function to generate pseudo-code for types

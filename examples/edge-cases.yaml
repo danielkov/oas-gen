@@ -1,0 +1,141 @@
+# Minimal reproduction for oas-gen issues
+# Run: oas-gen generate --input oas-gen-repro.yml --output repro-output
+openapi: 3.1.1
+info:
+  title: oas-gen Bug Reproduction
+  version: 1.0.0
+
+paths:
+  /test:
+    get:
+      operationId: getTest
+      responses:
+        "200":
+          description: Test response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TestResponse"
+  /ratings:
+    get:
+      operationId: getRatings
+      responses:
+        "200":
+          description: Ratings with distribution
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RatingSummary"
+
+components:
+  schemas:
+    # =========================================================================
+    # ISSUE 1: Numeric property names
+    # =========================================================================
+    # OpenAPI allows string property names like "1", "2", etc.
+    # oas-gen renders these as `pub 1: i32` which is invalid Rust.
+    # Rust identifiers cannot start with a digit.
+    #
+    # Expected: Use serde rename, e.g.:
+    #   #[serde(rename = "1")]
+    #   pub rating_1: i32,
+    # =========================================================================
+    RatingSummary:
+      type: object
+      required:
+        - distribution
+      properties:
+        distribution:
+          $ref: "#/components/schemas/RatingDistribution"
+
+    RatingDistribution:
+      type: object
+      required:
+        - "1"
+        - "2"
+        - "3"
+        - "4"
+        - "5"
+      properties:
+        "1":
+          type: integer
+          description: Count of 1-star ratings
+        "2":
+          type: integer
+          description: Count of 2-star ratings
+        "3":
+          type: integer
+          description: Count of 3-star ratings
+        "4":
+          type: integer
+          description: Count of 4-star ratings
+        "5":
+          type: integer
+          description: Count of 5-star ratings
+
+    # =========================================================================
+    # ISSUE 2: Generic base types used only via allOf
+    # =========================================================================
+    # These types are designed to be extended via allOf, not used directly.
+    # The `items: {}` and `data: type: object` create unspecified types
+    # that oas-gen renders as `Any` which doesn't exist in Rust.
+    #
+    # Problem: oas-gen still renders the standalone types like:
+    #   pub struct PaginatedResponse {
+    #       pub items: Vec<Any>,  // `Any` is not a valid Rust type
+    #   }
+    #
+    # Expected: Either:
+    #   a) Don't render types that are only used as allOf bases, OR
+    #   b) Use `serde_json::Value` instead of `Any`
+    # =========================================================================
+    PaginatedResponse:
+      type: object
+      required:
+        - items
+        - pagination
+      properties:
+        items:
+          type: array
+          items: {} # Empty schema - represents "any" type
+        pagination:
+          $ref: "#/components/schemas/PaginationMeta"
+
+    SuccessResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          type: object # Unspecified object - represents "any" type
+
+    PaginationMeta:
+      type: object
+      properties:
+        total:
+          type: integer
+        page:
+          type: integer
+        limit:
+          type: integer
+
+    # Example of how these base types are used correctly via allOf
+    # The concrete type overrides the generic `items` with a specific type
+    TestResponse:
+      allOf:
+        - $ref: "#/components/schemas/PaginatedResponse"
+        - type: object
+          properties:
+            items:
+              type: array
+              items:
+                $ref: "#/components/schemas/TestItem"
+
+    TestItem:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
