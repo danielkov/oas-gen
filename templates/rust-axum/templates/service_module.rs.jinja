@@ -418,7 +418,7 @@ impl {{ op.name.pascal }}Request {
 /// impl {{ trait_name }}<AppState> for {{ trait_name }}Service {
 {% for op_wrap in operations -%}
 {% set op = op_wrap.operation -%}
-///     async fn {{ op.name.snake }}(
+///     async fn {{ op.name.snake|escape_rust_keyword }}(
 ///         &self,
 ///         ctx: RequestContext<AppState>,
 {% for param in op.http.path_params -%}
@@ -437,7 +437,7 @@ impl {{ op.name.pascal }}Request {
 {% if let Some(success) = op.success -%}
 {% if let Some(ty) = success.ty -%}
 ///         // Return Ok(your_{{ ty.target|lower }}) or Err(error)
-///         todo!("implement {{ op.name.snake }}")
+///         todo!("implement {{ op.name.snake|escape_rust_keyword }}")
 {% else -%}
 ///         Ok(())
 {% endif -%}
@@ -466,7 +466,7 @@ where
     {% for op_wrap in operations -%}
     {% set op = op_wrap.operation -%}
     /// {{ op.http.method|fmt("{:?}") }} {{ op.http.path_template }}
-    fn {{ op.name.snake }}(
+    fn {{ op.name.snake|escape_rust_keyword }}(
         &self,
         ctx: RequestContext<S>,
         {% for param in op.http.path_params -%}
@@ -496,7 +496,7 @@ where
     fn router(self) -> Router<S> {
         {% for op_wrap in operations -%}
         {% set op = op_wrap.operation -%}
-        let {{ op.name.snake }}_handler = |ctx: RequestContext<S>, Extension(service): Extension<Self>{% if op.http.path_params .len() == 1 %}, axum::extract::Path(path_params): axum::extract::Path<String>{% else if op.http.path_params .len() > 1 %}, axum::extract::Path(path_params): axum::extract::Path<({% for p in op.http.path_params -%}
+        let {{ op.name.snake|escape_rust_keyword }}_handler = |ctx: RequestContext<S>, Extension(service): Extension<Self>{% if op.http.path_params .len() == 1 %}, axum::extract::Path(path_params): axum::extract::Path<String>{% else if op.http.path_params .len() > 1 %}, axum::extract::Path(path_params): axum::extract::Path<({% for p in op.http.path_params -%}
             String{% if !loop.last %}, {% endif -%}
         {% endfor %})>{% endif -%}
         {% if op.http.query .len() > 0 %}, axum::extract::Query(query): axum::extract::Query<{{ op.name.pascal }}Query>{% endif -%}
@@ -518,7 +518,7 @@ where
             {% endfor %}) = path_params;
             {% endif -%}
 
-            match service.{{ op.name.snake }}(
+            match service.{{ op.name.snake|escape_rust_keyword }}(
                 ctx,
                 {% for param in op.http.path_params -%}
                 {{ param.name.snake|escape_rust_keyword }},
@@ -566,7 +566,7 @@ where
         {% endfor -%}
         Router::new()
             {% for op_wrap in operations -%}
-            .route("{{ op_wrap.operation.http.path_template }}", {{ op_wrap.method_fn }}({{ op_wrap.operation.name.snake }}_handler))
+            .route("{{ op_wrap.operation.http.path_template }}", {{ op_wrap.method_fn }}({{ op_wrap.operation.name.snake|escape_rust_keyword }}_handler))
             {% endfor -%}
             .layer(Extension(self))
     }
