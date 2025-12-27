@@ -10,4 +10,5 @@ members = [
   "templates/rust-axum",
   "overlay",
   "lint",
+  "test-generated/petstore-axum",
 ]

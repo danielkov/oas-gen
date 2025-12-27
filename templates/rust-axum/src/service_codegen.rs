@@ -165,6 +165,15 @@ pub enum ResponseContentType {
 }
 
 impl<'a> OperationTemplate<'a> {
+    /// Check if a content type is a JSON media type
+    /// Only application/json and application/*+json are considered JSON
+    /// text/* types like text/csv are NOT JSON
+    fn is_json_content_type(ct: &str) -> bool {
+        ct == "application/json"
+            || ct.starts_with("application/json;")
+            || ct.ends_with("+json")
+    }
+
     fn new(operation: &'a Operation) -> Self {
         let method_fn = match operation.http.method {
             HttpMethod::Get => "get",
@@ -198,15 +207,16 @@ impl<'a> OperationTemplate<'a> {
         let mut binary_content_types = Vec::new();
 
         // First check if we have multiple produces (from http.produces)
+        // Collect all non-JSON content types for binary/text handling
         for ct in &operation.http.produces {
-            if !ct.starts_with("application/json") && !ct.starts_with("text/") {
+            if !Self::is_json_content_type(ct) {
                 binary_content_types.push(ct.clone());
             }
         }
 
         let response_content_type = if let Some(success) = &operation.success {
             if let Some(ct) = &success.content_type {
-                if ct.starts_with("application/json") || ct.starts_with("text/") {
+                if Self::is_json_content_type(ct) {
                     ResponseContentType::Json
                 } else if binary_content_types.len() > 1 {
                     ResponseContentType::MultipleBinary

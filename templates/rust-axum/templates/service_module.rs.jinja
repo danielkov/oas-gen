@@ -207,18 +207,16 @@ where
 {
     type Rejection = {{ op.name.pascal }}Rejection;
 
-    fn from_request(
+    async fn from_request(
         req: axum::http::Request<axum::body::Body>,
         state: &S,
-    ) -> impl std::future::Future<Output = Result<Self, Self::Rejection>> + Send {
-        async move {
-            // Delegate to axum's Multipart extractor
-            let multipart = axum::extract::Multipart::from_request(req, state)
-                .await
-                .map_err(|e| {{ op.name.pascal }}Rejection::bad_request(format!("multipart error: {}", e)))?;
+    ) -> Result<Self, Self::Rejection> {
+        // Delegate to axum's Multipart extractor
+        let multipart = axum::extract::Multipart::from_request(req, state)
+            .await
+            .map_err(|e| {{ op.name.pascal }}Rejection::bad_request(format!("multipart error: {}", e)))?;
 
-            Self::decode_multipart(multipart).await
-        }
+        Self::decode_multipart(multipart).await
     }
 }
 

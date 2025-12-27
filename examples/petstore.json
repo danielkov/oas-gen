@@ -709,6 +709,27 @@
           }
         }
       }
+    },
+    "/pets/export/csv": {
+      "get": {
+        "tags": ["pets"],
+        "summary": "Export pets data",
+        "description": "Export all pets data as a binary archive file",
+        "operationId": "exportPetsCSV",
+        "responses": {
+          "200": {
+            "description": "Export archive file",
+            "content": {
+              "text/csv": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
