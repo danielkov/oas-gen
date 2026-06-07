@@ -151,10 +151,12 @@ mod filters {
             StableId::Primitive(p) => Ok(render_primitive(p).to_string()),
             StableId::Named(name) => {
                 let pascal = CanonicalName::from_string(name).pascal;
-                let ctx = askama::get_value::<super::RenderCtx>(values, "render_ctx")
-                    .map_err(|_| askama::Error::Custom(
-                        "render_type_doc requires a RenderCtx askama value".into(),
-                    ))?;
+                let ctx =
+                    askama::get_value::<super::RenderCtx>(values, "render_ctx").map_err(|_| {
+                        askama::Error::Custom(
+                            "render_type_doc requires a RenderCtx askama value".into(),
+                        )
+                    })?;
                 Ok(ctx.qualify_for_doc(type_id, &pascal))
             }
         }

@@ -37,9 +37,9 @@ fn check_param_naming(param: &oas3::spec::Parameter, ptr: &str, out: &mut Vec<Fi
     let name = &param.name;
 
     match param.location {
-        ParameterIn::Query => {
+        ParameterIn::Query
             // Query params should be camelCase or snake_case
-            if name.contains('-') {
+            if name.contains('-') => {
                 out.push(Finding::new(
                     RuleId::ParamNamingConsistent,
                     format!("{}/name", ptr),
@@ -49,7 +49,6 @@ fn check_param_naming(param: &oas3::spec::Parameter, ptr: &str, out: &mut Vec<Fi
                     ),
                 ));
             }
-        }
         ParameterIn::Header => {
             // Headers typically use X-Header-Case or lowercase
             // Skip standard headers
