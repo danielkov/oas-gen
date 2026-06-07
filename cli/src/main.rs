@@ -258,6 +258,7 @@ fn handle_resolve(spec: PathBuf, output: Option<PathBuf>, verbose: bool) -> Resu
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_generate(
     spec: PathBuf,
     template: String,
