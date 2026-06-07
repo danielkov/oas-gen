@@ -97,14 +97,39 @@ impl Generator for TypeScript2Generator {
     fn after_write_to_disk(&self, output_dir: &Path, _vfs: &VirtualFS) -> Result<()> {
         use std::process::Command;
 
-        let status = Command::new("npm")
+        // Pick the package manager from the nearest lockfile, walking up from the
+        // output directory. Falls back to npm. Keeps the post-generation install
+        // working for bun/pnpm/yarn repos whose `workspace:*` ranges npm rejects.
+        let pm = {
+            let mut found = "npm";
+            let mut dir = Some(output_dir);
+            while let Some(d) = dir {
+                if d.join("bun.lock").exists() || d.join("bun.lockb").exists() {
+                    found = "bun";
+                    break;
+                } else if d.join("pnpm-lock.yaml").exists() {
+                    found = "pnpm";
+                    break;
+                } else if d.join("yarn.lock").exists() {
+                    found = "yarn";
+                    break;
+                } else if d.join("package-lock.json").exists() {
+                    found = "npm";
+                    break;
+                }
+                dir = d.parent();
+            }
+            found
+        };
+
+        let status = Command::new(pm)
             .arg("install")
             .current_dir(output_dir)
             .status()
-            .map_err(|e| Error::Custom(format!("Failed to run npm install: {}", e)))?;
+            .map_err(|e| Error::Custom(format!("Failed to run {pm} install: {e}")))?;
 
         if !status.success() {
-            return Err(Error::Custom("npm install failed".to_string()));
+            return Err(Error::Custom(format!("{pm} install failed")));
         }
 
         Ok(())
