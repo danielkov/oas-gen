@@ -66,6 +66,30 @@ pub fn emit_client(ir: &GenIr) -> Module {
 
     items.push(Item::BlankLine);
 
+    // SDKErrorContext interface
+    items.push(Item::Interface(InterfaceDecl {
+        name: "SDKErrorContext".into(),
+        exported: true,
+        docs: Some(JsDoc::from_text(
+            "Safe request and optional response details supplied to `onError`.",
+        )),
+        fields: vec![
+            InterfaceField::new(
+                "request",
+                TsType::Generic(
+                    "Omit".into(),
+                    vec![
+                        TsType::named("SDKRequestInit"),
+                        TsType::Literal("'body'".into()),
+                    ],
+                ),
+            ),
+            InterfaceField::new("response", TsType::named("SDKResponseInfo")).optional(),
+        ],
+    }));
+
+    items.push(Item::BlankLine);
+
     // SDKHooks interface
     items.push(Item::Interface(InterfaceDecl {
         name: "SDKHooks".into(),
@@ -94,7 +118,10 @@ pub fn emit_client(ir: &GenIr) -> Module {
                 "Called after each response is received, before the body is parsed.",
             )),
             InterfaceField::new("onError", TsType::Function {
-                params: vec![("error".into(), TsType::Named("unknown".into()))],
+                params: vec![
+                    ("error".into(), TsType::Named("unknown".into())),
+                    ("context".into(), TsType::named("SDKErrorContext")),
+                ],
                 ret: Box::new(TsType::union(vec![TsType::Void, TsType::promise(TsType::Void)])),
             })
             .optional()

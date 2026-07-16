@@ -24,8 +24,10 @@ pub fn emit_service(service: &Service, ir: &GenIr) -> Module {
     }
 
     imports.add_value("UnexpectedError", "../types/errors");
+    imports.add_type("SDKErrorContext", "./client");
     imports.add_type("SDKHooks", "./client");
     imports.add_type("SDKRequestInit", "./client");
+    imports.add_type("SDKResponseInfo", "./client");
 
     if !ir.auth_schemes.is_empty() {
         imports.add_type("SecurityConfig", "./client");
@@ -208,15 +210,15 @@ fn emit_service_class(service: &Service, ir: &GenIr) -> ClassDecl {
         is_async: true,
         name: "raise".into(),
         visibility: Some(Visibility::Private),
-        params: vec![Param::new(
-            "error",
-            TsType::Named("globalThis.Error".into()),
-        )],
+        params: vec![
+            Param::new("error", TsType::Named("globalThis.Error".into())),
+            Param::new("context", TsType::named("SDKErrorContext")),
+        ],
         return_type: Some(TsType::promise(TsType::Named("never".into()))),
         docs: None,
         body: vec![
             Expr::Raw("this.hooks.onError?.".into())
-                .call_with(vec![Expr::id("error")])
+                .call_with(vec![Expr::id("error"), Expr::id("context")])
                 .awaited()
                 .into_stmt(),
             Stmt::Throw(Expr::id("error")),
@@ -468,8 +470,20 @@ fn emit_operation_method(op: &Operation, ir: &GenIr) -> ClassMember {
             .into_stmt(),
     );
 
-    // Fetch call
+    // Safe request context and fetch call
     body_stmts.push(Stmt::BlankLine);
+    body_stmts.push(Stmt::const_typed(
+        "requestInfo",
+        TsType::Generic(
+            "Omit".into(),
+            vec![
+                TsType::named("SDKRequestInit"),
+                TsType::Literal("'body'".into()),
+            ],
+        ),
+        request_info_expr(),
+    ));
+
     let mut fetch_opts = vec![
         ObjEntry::kv("method", Expr::id("request").dot("method")),
         ObjEntry::kv("headers", Expr::id("request").dot("headers")),
@@ -477,28 +491,56 @@ fn emit_operation_method(op: &Operation, ir: &GenIr) -> ClassMember {
     if has_body {
         fetch_opts.push(ObjEntry::kv("body", Expr::id("request").dot("body")));
     }
-    body_stmts.push(Stmt::const_decl(
-        "response",
-        Expr::call(
-            "fetch",
-            vec![Expr::id("request").dot("url"), Expr::Object(fetch_opts)],
-        )
-        .awaited(),
-    ));
+    body_stmts.push(Stmt::VarDecl {
+        kind: VarKind::Let,
+        name: "response".into(),
+        ty: Some(TsType::named("Response")),
+        init: None,
+    });
+    body_stmts.push(Stmt::TryCatch {
+        try_body: vec![Stmt::assign(
+            Expr::id("response"),
+            Expr::call(
+                "fetch",
+                vec![Expr::id("request").dot("url"), Expr::Object(fetch_opts)],
+            )
+            .awaited(),
+        )],
+        catch_param: "error".into(),
+        catch_body: vec![
+            Expr::Raw("this.hooks.onError?.".into())
+                .call_with(vec![
+                    Expr::id("error"),
+                    Expr::Object(vec![ObjEntry::kv("request", Expr::id("requestInfo"))]),
+                ])
+                .awaited()
+                .into_stmt(),
+            Stmt::Throw(Expr::id("error")),
+        ],
+    });
 
     // onResponse hook
     body_stmts.push(Stmt::BlankLine);
+    body_stmts.push(Stmt::const_typed(
+        "responseInfo",
+        TsType::named("SDKResponseInfo"),
+        response_info_expr(),
+    ));
     body_stmts.push(
         Expr::Raw("this.hooks.onResponse?.".into())
-            .call_with(vec![Expr::Object(vec![
-                ObjEntry::kv("method", Expr::id("request").dot("method")),
-                ObjEntry::kv("url", Expr::id("request").dot("url")),
-                ObjEntry::kv("status", Expr::id("response").dot("status")),
-                ObjEntry::kv("headers", Expr::id("response").dot("headers")),
-            ])])
+            .call_with(vec![Expr::id("responseInfo")])
             .awaited()
             .into_stmt(),
     );
+
+    body_stmts.push(Stmt::const_typed(
+        "errorContext",
+        TsType::named("SDKErrorContext"),
+        Expr::Object(vec![
+            ObjEntry::kv("request", Expr::id("requestInfo")),
+            ObjEntry::kv("response", Expr::id("responseInfo")),
+        ]),
+    ));
 
     // Error handling
     body_stmts.push(Stmt::BlankLine);
@@ -528,13 +570,16 @@ fn emit_operation_method(op: &Operation, ir: &GenIr) -> ClassMember {
     let unexpected_error = Expr::id("this")
         .method(
             "raise",
-            vec![Expr::new_expr(
-                "UnexpectedError",
-                vec![
-                    Expr::id("response").dot("status"),
-                    Expr::id("response").method("text", vec![]).awaited(),
-                ],
-            )],
+            vec![
+                Expr::new_expr(
+                    "UnexpectedError",
+                    vec![
+                        Expr::id("response").dot("status"),
+                        Expr::id("response").method("text", vec![]).awaited(),
+                    ],
+                ),
+                Expr::id("errorContext"),
+            ],
         )
         .awaited()
         .into_stmt();
@@ -556,10 +601,10 @@ fn emit_operation_method(op: &Operation, ir: &GenIr) -> ClassMember {
                             Expr::id("this")
                                 .method(
                                     "raise",
-                                    vec![Expr::new_expr(
-                                        class_name.clone(),
-                                        vec![Expr::id("body")],
-                                    )],
+                                    vec![
+                                        Expr::new_expr(class_name.clone(), vec![Expr::id("body")]),
+                                        Expr::id("errorContext"),
+                                    ],
                                 )
                                 .awaited()
                                 .into_stmt(),
@@ -574,13 +619,18 @@ fn emit_operation_method(op: &Operation, ir: &GenIr) -> ClassMember {
                             Expr::id("this")
                                 .method(
                                     "raise",
-                                    vec![Expr::new_expr(
-                                        "UnexpectedError",
-                                        vec![
-                                            Expr::id("response").dot("status"),
-                                            Expr::id("response").method("text", vec![]).awaited(),
-                                        ],
-                                    )],
+                                    vec![
+                                        Expr::new_expr(
+                                            "UnexpectedError",
+                                            vec![
+                                                Expr::id("response").dot("status"),
+                                                Expr::id("response")
+                                                    .method("text", vec![])
+                                                    .awaited(),
+                                            ],
+                                        ),
+                                        Expr::id("errorContext"),
+                                    ],
                                 )
                                 .awaited()
                                 .into_stmt(),
@@ -589,7 +639,13 @@ fn emit_operation_method(op: &Operation, ir: &GenIr) -> ClassMember {
                 } else {
                     vec![
                         Expr::id("this")
-                            .method("raise", vec![Expr::new_expr(class_name.clone(), vec![])])
+                            .method(
+                                "raise",
+                                vec![
+                                    Expr::new_expr(class_name.clone(), vec![]),
+                                    Expr::id("errorContext"),
+                                ],
+                            )
                             .awaited()
                             .into_stmt(),
                     ]
@@ -697,4 +753,21 @@ fn emit_operation_method(op: &Operation, ir: &GenIr) -> ClassMember {
         docs,
         body: body_stmts,
     })
+}
+
+fn request_info_expr() -> Expr {
+    Expr::Object(vec![
+        ObjEntry::kv("method", Expr::id("request").dot("method")),
+        ObjEntry::kv("url", Expr::id("request").dot("url")),
+        ObjEntry::kv("headers", Expr::id("request").dot("headers")),
+    ])
+}
+
+fn response_info_expr() -> Expr {
+    Expr::Object(vec![
+        ObjEntry::kv("method", Expr::id("request").dot("method")),
+        ObjEntry::kv("url", Expr::id("request").dot("url")),
+        ObjEntry::kv("status", Expr::id("response").dot("status")),
+        ObjEntry::kv("headers", Expr::id("response").dot("headers")),
+    ])
 }

@@ -1,6 +1,6 @@
 {% if !type_imports.is_empty() %}import type { {% for type_import in type_imports %}{{ type_import }}{% if !loop.last %}, {% endif %}{% endfor %} } from '../types';
 {% endif %}import { UnexpectedError } from '../types/errors';
-import type { SDKHooks, SDKRequestInit{% if !auth_schemes.is_empty() %}, SecurityConfig{% endif %} } from './client';
+import type { SDKErrorContext, SDKHooks, SDKRequestInit, SDKResponseInfo{% if !auth_schemes.is_empty() %}, SecurityConfig{% endif %} } from './client';
 
 // Operation-specific error classes
 {% for operation in operations %}{% for error in operation.error_variants %}
@@ -31,8 +31,8 @@ export class {{ error.class_name }} extends globalThis.Error {
 {% endif %}export class {{ name.pascal }}Service {
   constructor(private baseUrl: string, {% if !auth_schemes.is_empty() %}private security: SecurityConfig, {% endif %}private hooks: SDKHooks) {}
 
-  private async raise(error: globalThis.Error): Promise<never> {
-    await this.hooks.onError?.(error);
+  private async raise(error: globalThis.Error, context: SDKErrorContext): Promise<never> {
+    await this.hooks.onError?.(error, context);
     throw error;
   }
 
@@ -75,32 +75,49 @@ export class {{ error.class_name }} extends globalThis.Error {
     };
     await this.hooks.onRequest?.(request);
 
-    const response = await fetch(request.url, {
+    const requestInfo: Omit<SDKRequestInit, 'body'> = {
       method: request.method,
+      url: request.url,
       headers: request.headers,
-      body: request.body,
-    });
+    };
+    let response: Response;
+    try {
+      response = await fetch(request.url, {
+        method: request.method,
+        headers: request.headers,
+        body: request.body,
+      });
+    } catch (error) {
+      await this.hooks.onError?.(error, { request: requestInfo });
+      throw error;
+    }
 
-    await this.hooks.onResponse?.({
+    const responseInfo: SDKResponseInfo = {
       method: request.method,
       url: request.url,
       status: response.status,
       headers: response.headers,
-    });
+    };
+    await this.hooks.onResponse?.(responseInfo);
+
+    const errorContext: SDKErrorContext = {
+      request: requestInfo,
+      response: responseInfo,
+    };
 
     if (!response.ok) {
 {% if operation.has_errors %}      switch (response.status) {
 {% for error in operation.error_variants %}        case {{ error.status_code }}: {
 {% if error.has_body %}          const body = await response.json() as {{ error.body_type }};
-          await this.raise(new {{ error.class_name }}(body));
+          await this.raise(new {{ error.class_name }}(body), errorContext);
           break;
-{% else %}          await this.raise(new {{ error.class_name }}());
+{% else %}          await this.raise(new {{ error.class_name }}(), errorContext);
           break;
 {% endif %}        }
 {% endfor %}        default:
-          await this.raise(new UnexpectedError(response.status, await response.text()));
+          await this.raise(new UnexpectedError(response.status, await response.text()), errorContext);
       }
-{% else %}      await this.raise(new UnexpectedError(response.status, await response.text()));
+{% else %}      await this.raise(new UnexpectedError(response.status, await response.text()), errorContext);
 {% endif %}    }
 
     {% if operation.has_return %}return response.json();{% else %}return;{% endif %}

@@ -1260,7 +1260,9 @@ struct ServiceExportData {
 mod tests {
     use super::*;
     use ir::gen_ir::{
-        Additional, CanonicalName, Docs, Field, Primitive, StableId, TypeDecl, TypeKind, TypeRef,
+        Additional, Body, BodyVariant, CanonicalName, Docs, ErrorDecl, ErrorUse, ErrorVariant,
+        Field, HttpMethod, HttpShape, Operation, Primitive, Service, StableId, StatusSpec,
+        TypeDecl, TypeKind, TypeRef,
     };
     use std::collections::{BTreeMap, BTreeSet};
 
@@ -1554,5 +1556,137 @@ mod tests {
             "Should render regular field with normal type, got: {}",
             result
         );
+    }
+
+    #[test]
+    fn emits_error_hook_context_for_network_and_http_failures() {
+        let vfs = TypeScriptGenerator::new()
+            .generate(&error_hook_ir(), &Config::default())
+            .unwrap();
+        let client = vfs
+            .get_file_str(Path::new("src/services/client.ts"))
+            .unwrap()
+            .unwrap();
+        let service = vfs
+            .get_file_str(Path::new("src/services/widgets.ts"))
+            .unwrap()
+            .unwrap();
+
+        assert!(client.contains("export interface SDKErrorContext"));
+        assert!(client.contains("request: Omit<SDKRequestInit, 'body'>;"));
+        assert!(client.contains("response?: SDKResponseInfo;"));
+        assert!(client.contains(
+            "onError?: (error: unknown, context: SDKErrorContext) => void | Promise<void>;"
+        ));
+
+        let request_info = declaration(service, "const requestInfo:");
+        assert!(request_info.contains("method: request.method"));
+        assert!(request_info.contains("url: request.url"));
+        assert!(request_info.contains("headers: request.headers"));
+        assert!(!request_info.contains("body:"));
+        assert!(service.contains("body: request.body"));
+
+        let fetch_try_start = service
+            .find("    try {\n      response = await fetch(")
+            .unwrap();
+        let fetch_catch_start = service[fetch_try_start..]
+            .find("    } catch (error) {")
+            .unwrap()
+            + fetch_try_start;
+        let fetch_try = &service[fetch_try_start..fetch_catch_start];
+        assert!(!fetch_try.contains("onError"));
+        assert!(!fetch_try.contains("onResponse"));
+
+        let response_info_start = service.find("    const responseInfo:").unwrap();
+        let fetch_catch = &service[fetch_catch_start..response_info_start];
+        assert_eq!(fetch_catch.matches("onError").count(), 1);
+        assert!(fetch_catch.contains("(error, { request: requestInfo })"));
+        assert!(fetch_catch.contains("throw error;"));
+
+        assert!(service.contains("const errorContext: SDKErrorContext"));
+        assert!(service.contains("response: responseInfo"));
+        assert!(
+            service.contains("await this.raise(new CreateWidgetBadRequestError(), errorContext);")
+        );
+    }
+
+    fn declaration<'a>(output: &'a str, prefix: &str) -> &'a str {
+        let start = output.find(prefix).unwrap();
+        let end = output[start..].find("};").unwrap() + start + 2;
+        &output[start..end]
+    }
+
+    fn error_hook_ir() -> GenIr {
+        let string_ref = TypeRef {
+            target: StableId::primitive(Primitive::String),
+            optional: false,
+            nullable: false,
+            by_ref: false,
+            modifiers: Vec::new(),
+        };
+        let operation = Operation {
+            id: StableId::new("CreateWidget"),
+            name: CanonicalName::from_string("CreateWidget"),
+            docs: Docs::default(),
+            deprecated: false,
+            http: HttpShape {
+                method: HttpMethod::Post,
+                path_template: "/widgets".to_string(),
+                segments: Vec::new(),
+                query: Vec::new(),
+                headers: Vec::new(),
+                cookies: Vec::new(),
+                path_params: Vec::new(),
+                body: Some(Body {
+                    variants: vec![BodyVariant {
+                        content_type: "application/json".to_string(),
+                        ty: string_ref,
+                        docs: Docs::default(),
+                        encoding: Vec::new(),
+                    }],
+                    preferred: Some("application/json".to_string()),
+                }),
+                consumes: vec!["application/json".to_string()],
+                produces: Vec::new(),
+            },
+            success: None,
+            alt_success: Vec::new(),
+            errors: ErrorUse::Inline(Box::new(ErrorDecl {
+                id: StableId::new("CreateWidgetErrors"),
+                name: CanonicalName::from_string("CreateWidgetErrors"),
+                docs: Docs::default(),
+                variants: vec![ErrorVariant {
+                    name: CanonicalName::from_string("BadRequest"),
+                    status: StatusSpec::Code(400),
+                    content_type: None,
+                    ty: None,
+                    docs: Docs::default(),
+                }],
+            })),
+            auth: Vec::new(),
+            pagination: None,
+            idempotent: false,
+            retryable_statuses: BTreeSet::new(),
+        };
+
+        GenIr {
+            api: ir::gen_ir::ApiMeta {
+                title: "Test API".to_string(),
+                version: "1.0.0".to_string(),
+                package_name: CanonicalName::from_string("test-api"),
+                docs: Docs::default(),
+            },
+            types: BTreeMap::new(),
+            services: vec![Service {
+                id: StableId::new("Widgets"),
+                name: CanonicalName::from_string("Widgets"),
+                docs: Docs::default(),
+                server_set: None,
+                operations: vec![operation],
+            }],
+            auth_schemes: Vec::new(),
+            errors: Vec::new(),
+            server_sets: Vec::new(),
+        }
     }
 }

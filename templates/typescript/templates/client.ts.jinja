@@ -22,6 +22,14 @@ export interface SDKResponseInfo {
 }
 
 /**
+ * Safe request and optional response details supplied to `onError`.
+ */
+export interface SDKErrorContext {
+  request: Omit<SDKRequestInit, 'body'>;
+  response?: SDKResponseInfo;
+}
+
+/**
  * Hooks for intercepting SDK lifecycle events.
  * All hooks are optional.
  */
@@ -31,7 +39,7 @@ export interface SDKHooks {
   /** Called after each response is received, before the body is parsed. */
   onResponse?: (response: SDKResponseInfo) => void | Promise<void>;
   /** Called when any API call results in an error, before the error is thrown. */
-  onError?: (error: unknown) => void | Promise<void>;
+  onError?: (error: unknown, context: SDKErrorContext) => void | Promise<void>;
 }
 
 {% if !auth_schemes.is_empty() %}/**
