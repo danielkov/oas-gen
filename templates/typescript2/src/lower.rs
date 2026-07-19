@@ -731,6 +731,7 @@ fn lower_member_jsdoc(doc: &JsDoc, indent: usize) -> Rc<Doc> {
 fn render_jsdoc_line(line: &JsDocLine) -> String {
     match line {
         JsDocLine::Text(s) => s.clone(),
+        JsDocLine::Param { name, desc } if desc.is_empty() => format!("@param {}", name),
         JsDocLine::Param { name, desc } => format!("@param {} {}", name, desc),
         JsDocLine::Returns(s) => format!("@returns {}", s),
         JsDocLine::Throws(s) => format!("@throws {{{}}}", s),
@@ -744,4 +745,19 @@ pub fn render_module(module: &Module) -> String {
     let doc = lower_module(module);
     let config = PrintConfig::default();
     render(&doc, &config)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn jsdoc_param_without_description_has_no_trailing_space() {
+        let line = JsDocLine::Param {
+            name: "body".to_string(),
+            desc: String::new(),
+        };
+
+        assert_eq!(render_jsdoc_line(&line), "@param body");
+    }
 }

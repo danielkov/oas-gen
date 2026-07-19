@@ -41,7 +41,7 @@ export class {{ error.class_name }} extends globalThis.Error {
 {% if let Some(description) = operation.docs.description %}   *
    * {{ description }}
 {% endif %}{% if !operation.params.is_empty() %}   *
-{% for param in operation.params %}   * @param {{ param.name }} {% if let Some(doc) = param.docs %}{{ doc }}{% endif %}
+{% for param in operation.params %}   * @param {{ param.name }}{% if let Some(doc) = param.docs %} {{ doc }}{% endif %}
 {% endfor %}{% endif %}{% if operation.has_errors %}   * @throws {{ "{" }}{% for error in operation.error_variants %}{{ error.class_name }}{% if !loop.last %} | {% endif %}{% endfor %} | UnexpectedError{{ "}" }}
 {% endif %}   */
   {% endif %}async {{ operation.method_name }}({% if operation.has_params %}params: {

@@ -1435,6 +1435,49 @@ mod tests {
     }
 
     #[test]
+    fn test_service_param_without_description_has_no_trailing_space() {
+        let name = CanonicalName::from_string("TestService");
+        let docs = Docs::default();
+        let operation = OperationData {
+            method_name: "create".to_string(),
+            docs: Docs {
+                summary: Some("Create a resource".to_string()),
+                ..Docs::default()
+            },
+            params: vec![ParamData {
+                name: "body".to_string(),
+                type_str: "string".to_string(),
+                optional: false,
+                docs: None,
+            }],
+            path_params: Vec::new(),
+            query_params: Vec::new(),
+            header_params: Vec::new(),
+            has_params: true,
+            has_body: true,
+            has_return: false,
+            return_type: "void".to_string(),
+            http_method: "POST".to_string(),
+            path_template: "/resources".to_string(),
+            auth_schemes: Vec::new(),
+            error_variants: Vec::new(),
+            has_errors: false,
+        };
+        let rendered = ServiceTemplate {
+            name: &name,
+            docs: &docs,
+            type_imports: Vec::new(),
+            operations: vec![operation],
+            auth_schemes: &[],
+        }
+        .render()
+        .unwrap();
+
+        assert!(rendered.contains(" * @param body\n"));
+        assert!(!rendered.contains(" * @param body \n"));
+    }
+
+    #[test]
     fn test_interface_with_const_fields() {
         let generator = TypeScriptGenerator::new();
 
